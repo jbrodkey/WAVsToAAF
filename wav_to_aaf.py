@@ -8,6 +8,8 @@ This script scans directories for WAV files, extracts comprehensive audio metada
 including BEXT, LIST-INFO chunks, embedded XML data, and UCS categorization, then 
 generates simplified AAF XML files suitable for media management workflows.
 
+Supports both interactive prompting mode and command-line arguments.
+
 Supported metadata:
 - Standard WAV properties (sample rate, channels, duration, etc.)
 - BEXT chunk (broadcast audio metadata)
@@ -16,15 +18,17 @@ Supported metadata:
 - UCS categorization (Universal Category System)
 
 Usage:
+    python wav_to_aaf.py                           # Interactive mode
     python wav_to_aaf.py [input_directory] [output_directory]
     
 Examples:
+    python wav_to_aaf.py                           # Prompts for input/output paths
     python wav_to_aaf.py ./audio_files ./aaf_output
     python wav_to_aaf.py /path/to/wavs  # outputs to ./aaf_output
-    python wav_to_aaf.py               # scans current dir, outputs to ./aaf_output
+    python wav_to_aaf.py -f input.wav output.aaf.xml   # Process single file
 
 Author: Jason Brodkey
-Version: 1.2.0
+Version: 1.3.0
 Date: 2025-11-03
 """
 
@@ -42,7 +46,7 @@ from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "Jason Brodkey"
 
 class WAVMetadataExtractor:
@@ -937,6 +941,16 @@ class WAVsToAAFProcessor:
 
 def main():
     """Main entry point"""
+    # Handle --version flag
+    if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
+        print(f"WAVsToAAF v{__version__}")
+        return 0
+    
+    # Check if we should run in interactive mode (no arguments provided)
+    if len(sys.argv) == 1:
+        return interactive_mode()
+    
+    # Use argparse for command-line mode
     parser = argparse.ArgumentParser(
         description="Convert WAV files to simplified AAF XML format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -966,6 +980,75 @@ Examples:
         return processor.process_single_file(args.input, args.output)
     else:
         return processor.process_directory(args.input, args.output)
+
+def interactive_mode() -> int:
+    """Interactive mode for user-friendly input prompting"""
+    print(f"WAVsToAAF v{__version__} - Convert WAV files to AAF XML format")
+    print("Copyright (c) 2025 Jason Brodkey. All rights reserved.")
+    print()
+    
+    # Prompt for input path
+    while True:
+        raw_input = input("Enter the path to the WAV directory or single WAV file: ").strip()
+        if not raw_input:
+            print("Please enter a valid path.")
+            continue
+        
+        # Expand user path and handle quotes
+        input_path = sanitize_path(raw_input)
+        
+        if os.path.exists(input_path):
+            break
+        else:
+            print(f"Path does not exist: {input_path}")
+            print("Please try again.")
+    
+    # Determine if it's a file or directory
+    is_single_file = os.path.isfile(input_path)
+    
+    # Prompt for output path
+    if is_single_file:
+        default_output = os.path.splitext(input_path)[0] + '.aaf.xml'
+        raw_output = input(f"Enter the output AAF XML file path (RETURN for '{default_output}'): ").strip()
+        output_path = sanitize_path(raw_output) if raw_output else default_output
+    else:
+        default_output = os.path.join(os.path.dirname(input_path), 'aaf_output')
+        raw_output = input(f"Enter the output directory (RETURN for '{default_output}'): ").strip()
+        output_path = sanitize_path(raw_output) if raw_output else default_output
+    
+    print()
+    print(f"Input: {input_path}")
+    print(f"Output: {output_path}")
+    print()
+    
+    # Process the files
+    processor = WAVsToAAFProcessor()
+    
+    if is_single_file:
+        return processor.process_single_file(input_path, output_path)
+    else:
+        return processor.process_directory(input_path, output_path)
+
+def sanitize_path(path_str: str) -> str:
+    """Normalize a path string coming from user input"""
+    if path_str is None:
+        return path_str
+    
+    s = path_str.strip()
+    
+    # Remove surrounding matching quotes
+    if (s.startswith("'") and s.endswith("'")) or (s.startswith('"') and s.endswith('"')):
+        s = s[1:-1]
+    
+    # Expand user path (~) and environment variables
+    s = os.path.expanduser(os.path.expandvars(s))
+    
+    try:
+        s = os.path.abspath(s)
+    except Exception:
+        pass
+    
+    return s
 
 if __name__ == "__main__":
     sys.exit(main())

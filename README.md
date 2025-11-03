@@ -78,6 +78,18 @@ chmod +x wav_to_aaf.py
 
 ## Usage
 
+### Interactive Mode (Recommended)
+
+Simply run the script without arguments for a user-friendly interactive experience:
+
+```bash
+python wav_to_aaf.py
+```
+
+The script will prompt you for:
+- **Input path**: WAV directory or single WAV file
+- **Output path**: AAF XML output directory or file (with smart defaults)
+
 ### Command Line Interface
 
 #### Process Directory (Default)
