@@ -1,0 +1,16 @@
+# WAVsToAAF Requirements
+
+# Core functionality uses Python standard library only
+# No external dependencies required for basic operation
+
+# Optional dependencies for enhanced functionality:
+# (Currently not used, but listed for future enhancements)
+
+# pyaaf2>=1.6.0          # For full AAF binary format support (future)
+# lxml>=4.6.0            # For enhanced XML processing (future)  
+# colorama>=0.4.4        # For colored terminal output (future)
+
+# Development dependencies:
+# pytest>=6.0.0          # For testing
+# black>=21.0.0          # For code formatting
+# flake8>=3.8.0          # For linting
