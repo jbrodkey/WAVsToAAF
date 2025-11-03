@@ -4,14 +4,15 @@ WAVsToAAF - Convert WAV files to simplified AAF XML format
 
 Copyright (c) 2025 Jason Brodkey. All rights reserved.
 
-This script scans directories for WAV files, extracts audio metadata including BEXT,
-LIST-INFO chunks, and UCS categorization, then generates simplified AAF XML files 
-suitable for media management workflows.
+This script scans directories for WAV files, extracts comprehensive audio metadata 
+including BEXT, LIST-INFO chunks, embedded XML data, and UCS categorization, then 
+generates simplified AAF XML files suitable for media management workflows.
 
 Supported metadata:
 - Standard WAV properties (sample rate, channels, duration, etc.)
 - BEXT chunk (broadcast audio metadata)
 - LIST-INFO chunks (IART, ICMT, ICOP, INAM, etc.)
+- XML chunks (EBU Core, BWF MetaEdit, Pro Tools, etc.)
 - UCS categorization (Universal Category System)
 
 Usage:
@@ -23,7 +24,7 @@ Examples:
     python wav_to_aaf.py               # scans current dir, outputs to ./aaf_output
 
 Author: Jason Brodkey
-Version: 1.1.0
+Version: 1.2.0
 Date: 2025-11-03
 """
 
@@ -41,7 +42,7 @@ from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __author__ = "Jason Brodkey"
 
 class WAVMetadataExtractor:
@@ -122,7 +123,7 @@ class WAVMetadataExtractor:
             # Parse different chunk types
             all_metadata.update(self._parse_bext_chunk_from_data(data))
             all_metadata.update(self._parse_info_chunks(data))
-            # TODO: Add XML chunk parsing in future enhancement
+            all_metadata.update(self._parse_xml_chunks(data))
             
         except Exception as e:
             print(f"Error reading metadata chunks from {wav_path}: {e}")
@@ -204,6 +205,177 @@ class WAVMetadataExtractor:
             print(f"Error parsing INFO chunks: {e}")
         
         return info_metadata
+    
+    def _parse_xml_chunks(self, data: bytes) -> Dict:
+        """Parse XML chunks from WAV file data"""
+        xml_metadata = {}
+        
+        try:
+            # Look for common XML patterns in broadcast files
+            xml_patterns = [
+                b'<ebucore:ebuCoreMain',  # EBU Core XML
+                b'<BWFMetaEdit>',         # BWF MetaEdit XML
+                b'<ProTools',             # Pro Tools XML
+                b'<axml',                 # BWF AXML chunk
+                b'<?xml'                  # Generic XML
+            ]
+            
+            for pattern in xml_patterns:
+                xml_start = data.find(pattern)
+                if xml_start != -1:
+                    # Try to find the end of the XML
+                    xml_end = self._find_xml_end(data, xml_start, pattern)
+                    if xml_end > xml_start:
+                        xml_data = data[xml_start:xml_end].decode('utf-8', errors='ignore')
+                        
+                        # Parse the XML and extract metadata
+                        parsed_xml = self._parse_xml_content(xml_data)
+                        if parsed_xml:
+                            # Prefix keys to avoid conflicts with other metadata
+                            xml_prefix = self._get_xml_prefix(pattern)
+                            for key, value in parsed_xml.items():
+                                xml_metadata[f"{xml_prefix}_{key}"] = value
+                        
+                        # Only process the first XML chunk found
+                        break
+                        
+        except Exception as e:
+            print(f"Error parsing XML chunks: {e}")
+        
+        return xml_metadata
+    
+    def _find_xml_end(self, data: bytes, start_pos: int, pattern: bytes) -> int:
+        """Find the end of an XML block"""
+        try:
+            # Common XML ending patterns
+            if pattern == b'<ebucore:ebuCoreMain':
+                end_pattern = b'</ebucore:ebuCoreMain>'
+            elif pattern == b'<BWFMetaEdit>':
+                end_pattern = b'</BWFMetaEdit>'
+            elif pattern == b'<ProTools':
+                end_pattern = b'</ProTools>'
+            elif pattern == b'<axml':
+                end_pattern = b'</axml>'
+            else:
+                # Generic approach - look for end of root element
+                # Find the root element name
+                root_start = data.find(b'<', start_pos)
+                if root_start == -1:
+                    return -1
+                root_end = data.find(b'>', root_start)
+                if root_end == -1:
+                    return -1
+                
+                # Extract root element name (handle attributes)
+                root_element = data[root_start + 1:root_end].split(b' ')[0].split(b'\t')[0]
+                end_pattern = b'</' + root_element + b'>'
+            
+            end_pos = data.find(end_pattern, start_pos)
+            if end_pos != -1:
+                return end_pos + len(end_pattern)
+            
+            # Fallback: look for next major chunk or end of file
+            # Look for common WAV chunks that would indicate end of XML
+            chunk_patterns = [b'data', b'fmt ', b'LIST', b'bext', b'PEAK']
+            next_chunk = len(data)
+            for chunk_pattern in chunk_patterns:
+                chunk_pos = data.find(chunk_pattern, start_pos + 100)  # Skip immediate area
+                if chunk_pos != -1 and chunk_pos < next_chunk:
+                    next_chunk = chunk_pos
+            
+            return min(next_chunk, start_pos + 65536)  # Limit XML size to 64KB
+            
+        except Exception:
+            return start_pos + 1024  # Fallback to small chunk
+    
+    def _get_xml_prefix(self, pattern: bytes) -> str:
+        """Get prefix for XML metadata keys based on XML type"""
+        if pattern == b'<ebucore:ebuCoreMain':
+            return 'ebucore'
+        elif pattern == b'<BWFMetaEdit>':
+            return 'bwfmetaedit'
+        elif pattern == b'<ProTools':
+            return 'protools'
+        elif pattern == b'<axml':
+            return 'axml'
+        else:
+            return 'xml'
+    
+    def _parse_xml_content(self, xml_data: str) -> Dict:
+        """Parse XML content and extract metadata"""
+        metadata = {}
+        
+        try:
+            # Clean up the XML data
+            xml_data = xml_data.strip()
+            
+            # Handle XML declaration and encoding issues
+            if not xml_data.startswith('<?xml'):
+                xml_data = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_data
+            
+            # Parse with iterparse to handle large XML efficiently
+            xml_io = io.StringIO(xml_data)
+            
+            try:
+                # Try to parse as proper XML
+                for event, elem in ET.iterparse(xml_io, events=("start", "end")):
+                    if event == "end" and elem.text and elem.text.strip():
+                        # Remove namespace prefix from tag name
+                        tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                        tag = tag.split(':')[-1]  # Remove namespace prefix
+                        
+                        # Clean and store the text content
+                        text_content = self._sanitize_string(elem.text.strip())
+                        if text_content and len(text_content) > 0:
+                            metadata[tag] = text_content
+                        
+                        # Also extract attributes if they contain useful data
+                        for attr_name, attr_value in elem.attrib.items():
+                            if attr_value and attr_value.strip():
+                                attr_key = f"{tag}_{attr_name}"
+                                metadata[attr_key] = self._sanitize_string(attr_value.strip())
+                
+            except ET.ParseError:
+                # If XML parsing fails, try to extract key-value pairs manually
+                metadata = self._extract_xml_manually(xml_data)
+                
+        except Exception as e:
+            print(f"Error parsing XML content: {e}")
+        
+        return metadata
+    
+    def _extract_xml_manually(self, xml_data: str) -> Dict:
+        """Manually extract metadata from XML when parsing fails"""
+        metadata = {}
+        
+        try:
+            # Use regex to find tag-value pairs
+            import re
+            
+            # Find simple tag patterns like <tag>value</tag>
+            tag_pattern = r'<([^/>]+)>([^<]+)</[^>]+>'
+            matches = re.findall(tag_pattern, xml_data)
+            
+            for tag_match, value_match in matches:
+                # Clean tag name (remove namespaces and attributes)
+                tag = re.sub(r'[^a-zA-Z0-9_].*', '', tag_match.split(':')[-1])
+                value = self._sanitize_string(value_match.strip())
+                
+                if tag and value and len(value) > 0:
+                    metadata[tag] = value
+            
+            # Also look for attribute patterns like attribute="value"
+            attr_pattern = r'(\w+)="([^"]+)"'
+            attr_matches = re.findall(attr_pattern, xml_data)
+            
+            for attr_name, attr_value in attr_matches:
+                if attr_name and attr_value:
+                    metadata[f"attr_{attr_name}"] = self._sanitize_string(attr_value)
+                    
+        except Exception as e:
+            print(f"Error in manual XML extraction: {e}")
+        
+        return metadata
     
     def _sanitize_string(self, value: str) -> str:
         """Clean string data for metadata"""
@@ -432,8 +604,8 @@ class AAFGenerator:
     def __init__(self):
         self.namespace = "http://www.aafassociation.org/aafxml"
     
-    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, ucs_metadata: Dict = None) -> str:
-        """Create simplified AAF XML from WAV, BEXT, INFO, and UCS metadata"""
+    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, xml_metadata: Dict = None, ucs_metadata: Dict = None) -> str:
+        """Create simplified AAF XML from WAV, BEXT, INFO, XML, and UCS metadata"""
         
         # Create root element
         root = ET.Element("AAF")
@@ -501,6 +673,37 @@ class AAFGenerator:
                     # Also store original chunk ID as attribute for reference
                     if chunk_id in info_mappings:
                         elem.set("chunkId", chunk_id)
+        
+        # Add XML metadata if available
+        if xml_metadata:
+            xml_elem = ET.SubElement(master_mob, "XmlMetadata")
+            
+            # Group XML metadata by prefix (ebucore, bwfmetaedit, etc.)
+            xml_groups = {}
+            for key, value in xml_metadata.items():
+                if '_' in key:
+                    prefix, field = key.split('_', 1)
+                    if prefix not in xml_groups:
+                        xml_groups[prefix] = {}
+                    xml_groups[prefix][field] = value
+                else:
+                    # Items without prefix go to generic group
+                    if 'generic' not in xml_groups:
+                        xml_groups['generic'] = {}
+                    xml_groups['generic'][key] = value
+            
+            # Create sub-elements for each XML type
+            for xml_type, fields in xml_groups.items():
+                if fields:  # Only create section if it has data
+                    type_elem = ET.SubElement(xml_elem, f"{xml_type.capitalize()}Data")
+                    
+                    for field_name, field_value in fields.items():
+                        if field_value and str(field_value).strip():
+                            # Clean field name for XML element
+                            clean_field = re.sub(r'[^a-zA-Z0-9_]', '', field_name)
+                            if clean_field:
+                                field_elem = ET.SubElement(type_elem, clean_field.capitalize())
+                                field_elem.text = str(field_value)
         
         # Add UCS metadata if available
         if ucs_metadata:
@@ -621,13 +824,24 @@ class WAVsToAAFProcessor:
                     'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
                 ]}
                 
-                info_metadata = {k: v for k, v in all_chunks.items() if k not in bext_metadata}
+                # Extract XML metadata (keys with XML prefixes)
+                xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
+                xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
                 
-                # Show INFO metadata found
+                # INFO metadata is everything else (not BEXT or XML)
+                used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
+                info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
+                
+                # Show metadata found
                 if info_metadata:
                     info_items = [f"{k}={v}" for k, v in info_metadata.items() if v]
                     if info_items:
                         print(f"  INFO metadata: {', '.join(info_items[:3])}{'...' if len(info_items) > 3 else ''}")
+                
+                if xml_metadata:
+                    xml_types = set(k.split('_')[0] for k in xml_metadata.keys() if '_' in k)
+                    if xml_types:
+                        print(f"  XML metadata: {', '.join(xml_types)}")
                 
                 # UCS categorization
                 ucs_metadata = self.ucs_processor.categorize_sound(
@@ -640,7 +854,7 @@ class WAVsToAAFProcessor:
                     print(f"  UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
                 
                 # Generate AAF XML
-                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, ucs_metadata)
+                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata)
                 
                 # Write output file
                 output_filename = wav_file.stem + '.aaf.xml'
@@ -681,11 +895,21 @@ class WAVsToAAFProcessor:
                 'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
             ]}
             
-            info_metadata = {k: v for k, v in all_chunks.items() if k not in bext_metadata}
+            # Extract XML metadata (keys with XML prefixes)
+            xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
+            xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
             
-            # Show INFO metadata found
+            # INFO metadata is everything else (not BEXT or XML)
+            used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
+            info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
+            
+            # Show metadata found
             if info_metadata:
                 print(f"INFO metadata found: {list(info_metadata.keys())}")
+            
+            if xml_metadata:
+                xml_types = set(k.split('_')[0] for k in xml_metadata.keys() if '_' in k)
+                print(f"XML metadata found: {list(xml_types)}")
             
             # UCS categorization
             ucs_metadata = self.ucs_processor.categorize_sound(
@@ -698,7 +922,7 @@ class WAVsToAAFProcessor:
                 print(f"UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
             
             # Generate AAF XML
-            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, ucs_metadata)
+            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata)
             
             # Write output file
             with open(output_file, 'w', encoding='utf-8') as f:

@@ -4,7 +4,7 @@ Convert WAV files to simplified AAF (Advanced Authoring Format) XML files with e
 
 ## Overview
 
-WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, and UCS categorization, then generates simplified AAF XML files suitable for media management workflows.
+WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, embedded XML chunks, and UCS categorization, then generates simplified AAF XML files suitable for media management workflows.
 
 ## Features
 
@@ -12,6 +12,7 @@ WAVsToAAF is a Python utility that scans directories for WAV files, extracts com
 - **Single File Mode**: Process individual files
 - **BEXT Support**: Extracts broadcast metadata from BEXT chunks
 - **LIST-INFO Support**: Extracts RIFF INFO metadata (IART, ICMT, ICOP, INAM, etc.)
+- **XML Chunk Support**: Extracts embedded XML metadata (EBU Core, BWF MetaEdit, Pro Tools, etc.)
 - **UCS Integration**: Universal Category System sound categorization
 - **Audio Metadata**: Captures sample rate, channels, duration, file size
 - **Timecode Generation**: Converts duration to timecode format
@@ -47,6 +48,13 @@ WAVsToAAF is a Python utility that scans directories for WAV files, extracts com
 - **ISRC**: Source
 - **ISRF**: Source Form
 - **ITCH**: Technician
+
+### XML Chunks (Embedded XML Metadata)
+- **EBU Core XML**: `<ebucore:ebuCoreMain>` - European Broadcasting Union metadata standard
+- **BWF MetaEdit XML**: `<BWFMetaEdit>` - BWF metadata editor format
+- **Pro Tools XML**: `<ProTools>` - Avid Pro Tools session metadata
+- **AXML Chunks**: `<axml>` - BWF AXML chunk format
+- **Generic XML**: Any `<?xml>` content found in WAV files
 
 ### UCS Categorization
 - Primary category matching with confidence scores
