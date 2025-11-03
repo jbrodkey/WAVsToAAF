@@ -25,6 +25,8 @@ import sys
 import wave
 import struct
 import argparse
+import csv
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -155,14 +157,168 @@ class WAVMetadataExtractor:
         frames = int((seconds % 1) * fps)
         return f"{hours:02d}:{minutes:02d}:{secs:02d}:{frames:02d}"
 
+class UCSProcessor:
+    """Process Universal Category System (UCS) data for sound categorization"""
+    
+    def __init__(self):
+        self.ucs_data = {}
+        self.ucs_loaded = False
+        self.load_ucs_data()
+    
+    def load_ucs_data(self):
+        """Load UCS data from CSV file"""
+        script_dir = Path(__file__).parent
+        ucs_files = [
+            script_dir / "UCS_v8.2.1_Full_List.csv",
+            script_dir / "UCS_v8.2.0_Full_List.csv",
+            script_dir / "UCS_Full_List.csv"
+        ]
+        
+        for ucs_file in ucs_files:
+            if ucs_file.exists():
+                try:
+                    with open(ucs_file, 'r', encoding='utf-8') as csvfile:
+                        reader = csv.DictReader(csvfile)
+                        for row in reader:
+                            # Handle both old and new CSV formats
+                            ucs_id = row.get('ID') or row.get('CatID') or row.get('CatShort', '')
+                            full_name = row.get('FullName') or f"{row.get('Category', '')} {row.get('SubCategory', '')}".strip()
+                            category = row.get('Category', '')
+                            subcategory = row.get('SubCategory', '')
+                            description = row.get('Description') or row.get('Explanations', '')
+                            keywords_str = row.get('Keywords') or row.get('Synonyms - Comma Separated', '')
+                            
+                            if ucs_id and category:
+                                self.ucs_data[ucs_id] = {
+                                    'id': ucs_id,
+                                    'full_name': full_name,
+                                    'category': category,
+                                    'subcategory': subcategory,
+                                    'description': description,
+                                    'keywords': [k.strip() for k in keywords_str.split(',') if k.strip()] if keywords_str else []
+                                }
+                    self.ucs_loaded = True
+                    print(f"Loaded {len(self.ucs_data)} UCS categories from {ucs_file.name}")
+                    break
+                except Exception as e:
+                    print(f"Warning: Could not load UCS file {ucs_file}: {e}")
+        
+        if not self.ucs_loaded:
+            print("Warning: No UCS file found. UCS categorization will be disabled.")
+    
+    def categorize_sound(self, filename: str, description: str = "") -> Dict:
+        """Categorize sound based on filename and description"""
+        if not self.ucs_loaded:
+            return {}
+        
+        # Combine filename and description for analysis
+        text_to_analyze = f"{filename} {description}".lower()
+        
+        # Remove file extension and common separators
+        text_to_analyze = re.sub(r'\.(wav|wave)$', '', text_to_analyze)
+        text_to_analyze = re.sub(r'[_\-\.]', ' ', text_to_analyze)
+        
+        # Score each UCS category
+        best_matches = []
+        
+        for ucs_id, ucs_info in self.ucs_data.items():
+            score = self._calculate_match_score(text_to_analyze, ucs_info)
+            if score > 0:
+                best_matches.append((score, ucs_id, ucs_info))
+        
+        # Sort by score and return top matches
+        best_matches.sort(reverse=True, key=lambda x: x[0])
+        
+        if best_matches:
+            # Return best match and alternatives
+            best_score, best_id, best_info = best_matches[0]
+            
+            result = {
+                'primary_category': {
+                    'id': best_id,
+                    'full_name': best_info['full_name'],
+                    'category': best_info['category'],
+                    'subcategory': best_info['subcategory'],
+                    'score': best_score
+                }
+            }
+            
+            # Add alternative matches if they're close in score
+            alternatives = []
+            for score, ucs_id, ucs_info in best_matches[1:6]:  # Top 5 alternatives
+                if score >= best_score * 0.7:  # Within 70% of best score
+                    alternatives.append({
+                        'id': ucs_id,
+                        'full_name': ucs_info['full_name'],
+                        'category': ucs_info['category'],
+                        'subcategory': ucs_info['subcategory'],
+                        'score': score
+                    })
+            
+            if alternatives:
+                result['alternative_categories'] = alternatives
+            
+            return result
+        
+        return {}
+    
+    def _calculate_match_score(self, text: str, ucs_info: Dict) -> float:
+        """Calculate match score between text and UCS category"""
+        score = 0.0
+        
+        # Check full name match
+        full_name = ucs_info['full_name'].lower()
+        if full_name in text:
+            score += 10.0
+        
+        # Check category and subcategory
+        category = ucs_info['category'].lower()
+        subcategory = ucs_info['subcategory'].lower()
+        
+        if category in text:
+            score += 5.0
+        if subcategory in text:
+            score += 7.0
+        
+        # Check keywords
+        for keyword in ucs_info['keywords']:
+            keyword = keyword.strip().lower()
+            if keyword and keyword in text:
+                score += 3.0
+        
+        # Check word-level matches
+        text_words = set(text.split())
+        name_words = set(full_name.split())
+        category_words = set(category.split())
+        subcategory_words = set(subcategory.split())
+        
+        # Exact word matches get higher scores
+        for word in text_words:
+            if len(word) > 2:  # Skip very short words
+                if word in name_words:
+                    score += 2.0
+                elif word in category_words:
+                    score += 1.5
+                elif word in subcategory_words:
+                    score += 1.5
+        
+        # Partial word matches
+        for text_word in text_words:
+            if len(text_word) > 3:
+                for name_word in name_words:
+                    if len(name_word) > 3 and (text_word in name_word or name_word in text_word):
+                        score += 0.5
+        
+        return score
+
 class AAFGenerator:
     """Generate simplified AAF XML files from WAV metadata"""
     
     def __init__(self):
         self.namespace = "http://www.aafassociation.org/aafxml"
     
-    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict) -> str:
-        """Create simplified AAF XML from WAV and BEXT metadata"""
+    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, ucs_metadata: Dict = None) -> str:
+        """Create simplified AAF XML from WAV, BEXT, and UCS metadata"""
         
         # Create root element
         root = ET.Element("AAF")
@@ -197,6 +353,31 @@ class AAFGenerator:
                 if value is not None and value != "":
                     elem = ET.SubElement(bext_elem, key.replace('_', '').title())
                     elem.text = str(value)
+        
+        # Add UCS metadata if available
+        if ucs_metadata:
+            ucs_elem = ET.SubElement(master_mob, "UCSMetadata")
+            
+            # Primary category
+            if 'primary_category' in ucs_metadata:
+                primary = ucs_metadata['primary_category']
+                primary_elem = ET.SubElement(ucs_elem, "PrimaryCategory")
+                ET.SubElement(primary_elem, "ID").text = primary['id']
+                ET.SubElement(primary_elem, "FullName").text = primary['full_name']
+                ET.SubElement(primary_elem, "Category").text = primary['category']
+                ET.SubElement(primary_elem, "SubCategory").text = primary['subcategory']
+                ET.SubElement(primary_elem, "MatchScore").text = str(primary['score'])
+            
+            # Alternative categories
+            if 'alternative_categories' in ucs_metadata and ucs_metadata['alternative_categories']:
+                alternatives_elem = ET.SubElement(ucs_elem, "AlternativeCategories")
+                for alt in ucs_metadata['alternative_categories']:
+                    alt_elem = ET.SubElement(alternatives_elem, "Category")
+                    ET.SubElement(alt_elem, "ID").text = alt['id']
+                    ET.SubElement(alt_elem, "FullName").text = alt['full_name']
+                    ET.SubElement(alt_elem, "Category").text = alt['category']
+                    ET.SubElement(alt_elem, "SubCategory").text = alt['subcategory']
+                    ET.SubElement(alt_elem, "MatchScore").text = str(alt['score'])
         
         # Timeline Mob Slot
         timeline_slot = ET.SubElement(master_mob, "TimelineMobSlot")
@@ -244,6 +425,7 @@ class WAVsToAAFProcessor:
     def __init__(self):
         self.extractor = WAVMetadataExtractor()
         self.generator = AAFGenerator()
+        self.ucs_processor = UCSProcessor()
     
     def process_directory(self, input_dir: str, output_dir: str) -> int:
         """Process all WAV files in a directory"""
@@ -282,8 +464,18 @@ class WAVsToAAFProcessor:
                     print(f"  Skipping {wav_file.name}: Could not read metadata")
                     continue
                 
+                # UCS categorization
+                ucs_metadata = self.ucs_processor.categorize_sound(
+                    wav_file.name, 
+                    bext_metadata.get('description', '')
+                )
+                
+                if ucs_metadata and 'primary_category' in ucs_metadata:
+                    category = ucs_metadata['primary_category']
+                    print(f"  UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
+                
                 # Generate AAF XML
-                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata)
+                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, ucs_metadata)
                 
                 # Write output file
                 output_filename = wav_file.stem + '.aaf.xml'
@@ -315,8 +507,18 @@ class WAVsToAAFProcessor:
                 print(f"Error: Could not read metadata from {wav_file}")
                 return 1
             
+            # UCS categorization
+            ucs_metadata = self.ucs_processor.categorize_sound(
+                Path(wav_file).name,
+                bext_metadata.get('description', '')
+            )
+            
+            if ucs_metadata and 'primary_category' in ucs_metadata:
+                category = ucs_metadata['primary_category']
+                print(f"UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
+            
             # Generate AAF XML
-            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata)
+            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, ucs_metadata)
             
             # Write output file
             with open(output_file, 'w', encoding='utf-8') as f:

@@ -11,6 +11,7 @@ WAVsToAAF is a Python utility that scans directories for WAV files, extracts aud
 - **Batch Processing**: Process entire directories of WAV files
 - **Single File Mode**: Process individual files
 - **BEXT Support**: Extracts broadcast metadata from BEXT chunks
+- **UCS Integration**: Universal Category System sound categorization
 - **Audio Metadata**: Captures sample rate, channels, duration, file size
 - **Timecode Generation**: Converts duration to timecode format
 - **XML Output**: Creates well-formatted AAF XML files
@@ -92,6 +93,12 @@ The generated AAF XML files contain:
 - Time reference and UMID
 - Loudness metadata (EBU R128)
 
+### UCS Categorization
+- Automatic sound categorization using Universal Category System
+- Category matching based on filename and BEXT description
+- Primary and alternative category suggestions
+- Match confidence scoring
+
 ### Example Output Structure
 ```xml
 <?xml version="1.0" ?>
@@ -110,6 +117,15 @@ The generated AAF XML files contain:
         <OriginationDate>2025-11-03</OriginationDate>
         <!-- ... more BEXT data ... -->
       </BextMetadata>
+      <UCSMetadata>
+        <PrimaryCategory>
+          <ID>AMBNatur</ID>
+          <FullName>AMBIENCE NATURE</FullName>
+          <Category>AMBIENCE</Category>
+          <SubCategory>NATURE</SubCategory>
+          <MatchScore>8.5</MatchScore>
+        </PrimaryCategory>
+      </UCSMetadata>
       <TimelineMobSlot SlotID="1">
         <AudioProperties>
           <SampleRate>48000</SampleRate>
@@ -122,7 +138,22 @@ The generated AAF XML files contain:
 </AAF>
 ```
 
-## BEXT Chunk Support
+## UCS (Universal Category System) Support
+
+WAVsToAAF automatically categorizes sounds using the Universal Category System v8.2.1:
+
+- **Automatic Detection**: Analyzes filenames and BEXT descriptions
+- **753 Categories**: Complete UCS category database included
+- **Smart Matching**: Keyword and pattern-based categorization
+- **Multiple Suggestions**: Primary category plus alternatives
+- **Confidence Scoring**: Match quality assessment
+
+### Category Matching Process:
+1. **Filename Analysis**: Extracts keywords from WAV filename
+2. **BEXT Integration**: Uses BEXT description if available  
+3. **Keyword Matching**: Compares against UCS synonyms and keywords
+4. **Scoring Algorithm**: Calculates match confidence
+5. **Result Ranking**: Returns best matches with scores
 
 WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks according to EBU R68-2000 standard:
 
