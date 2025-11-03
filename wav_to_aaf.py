@@ -2,6 +2,8 @@
 """
 WAVsToAAF - Convert WAV files to simplified AAF XML format
 
+Copyright (c) 2025 Jason Brodkey. All rights reserved.
+
 This script scans directories for WAV files, extracts audio metadata and BEXT data,
 and generates simplified AAF XML files suitable for media management workflows.
 

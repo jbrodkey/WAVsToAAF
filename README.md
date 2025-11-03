@@ -166,7 +166,7 @@ WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks a
 
 ## License
 
-MIT License - see project root for details.
+Copyright (c) 2025 Jason Brodkey. All rights reserved.
 
 ## Related Projects
 
