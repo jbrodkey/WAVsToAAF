@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-WAVsToAAF - Convert WAV files to simplified AAF XML format
+WAVsToAAF - Convert WAV files to Advanced Authoring Format (AAF) files
 
 Copyright (c) 2025 Jason Brodkey. All rights reserved.
 
 This script scans directories for WAV files, extracts comprehensive audio metadata 
 including BEXT, LIST-INFO chunks, embedded XML data, and UCS categorization, then 
-generates simplified AAF XML files suitable for media management workflows.
+generates Advanced Authoring Format (AAF) files with embedded metadata suitable 
+for professional media workflows.
 
 Supports both interactive prompting mode and command-line arguments.
 
@@ -25,10 +26,10 @@ Examples:
     python wav_to_aaf.py                           # Prompts for input/output paths
     python wav_to_aaf.py ./audio_files ./aaf_output
     python wav_to_aaf.py /path/to/wavs  # outputs to ./aaf_output
-    python wav_to_aaf.py -f input.wav output.aaf.xml   # Process single file
+    python wav_to_aaf.py -f input.wav output.aaf   # Process single file
 
 Author: Jason Brodkey
-Version: 1.3.0
+Version: 2.0.0
 Date: 2025-11-03
 """
 
@@ -44,9 +45,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
+import aaf2
 
-__version__ = "1.3.0"
+__version__ = "2.0.0"
 __author__ = "Jason Brodkey"
 
 class WAVMetadataExtractor:
@@ -603,176 +604,220 @@ class UCSProcessor:
         return score
 
 class AAFGenerator:
-    """Generate simplified AAF XML files from WAV metadata"""
+    """Generate AAF files from WAV metadata using pyaaf2"""
     
     def __init__(self):
-        self.namespace = "http://www.aafassociation.org/aafxml"
+        self.app_name = f"WAVsToAAF v{__version__}"
     
-    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, xml_metadata: Dict = None, ucs_metadata: Dict = None) -> str:
-        """Create simplified AAF XML from WAV, BEXT, INFO, XML, and UCS metadata"""
+    def create_aaf_file(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, 
+                       xml_metadata: Dict = None, ucs_metadata: Dict = None, output_path: str = None) -> str:
+        """Create AAF file from WAV, BEXT, INFO, XML, and UCS metadata"""
         
-        # Create root element
-        root = ET.Element("AAF")
-        root.set("xmlns", self.namespace)
-        root.set("version", "1.1")
-        root.set("generator", f"WAVsToAAF v{__version__}")
-        root.set("timestamp", datetime.now().isoformat())
-        
-        # Header
-        header = ET.SubElement(root, "Header")
-        ET.SubElement(header, "Version").text = "1.1"
-        ET.SubElement(header, "Generator").text = f"WAVsToAAF v{__version__}"
-        ET.SubElement(header, "CreationTime").text = datetime.now().isoformat()
-        
-        # Content Storage
-        content = ET.SubElement(root, "ContentStorage")
-        
-        # Master Mob
-        master_mob = ET.SubElement(content, "MasterMob")
-        mob_id = self._generate_mob_id(wav_metadata.get('filename', 'unknown'))
-        master_mob.set("MobID", mob_id)
-        
-        # Mob properties
-        ET.SubElement(master_mob, "Name").text = wav_metadata.get('filename', 'Unknown')
-        ET.SubElement(master_mob, "CreationTime").text = wav_metadata.get('creation_time', '')
-        ET.SubElement(master_mob, "LastModified").text = wav_metadata.get('modification_time', '')
-        
-        # Add BEXT metadata if available
-        if bext_metadata:
-            bext_elem = ET.SubElement(master_mob, "BextMetadata")
-            for key, value in bext_metadata.items():
-                if value is not None and value != "":
-                    elem = ET.SubElement(bext_elem, key.replace('_', '').title())
-                    elem.text = str(value)
-        
-        # Add LIST-INFO metadata if available
-        if info_metadata:
-            info_elem = ET.SubElement(master_mob, "InfoMetadata")
-            
-            # Standard INFO chunk mappings
-            info_mappings = {
-                'IART': 'Artist',
-                'ICMT': 'Comment', 
-                'ICOP': 'Copyright',
-                'ICRD': 'CreationDate',
-                'IENG': 'Engineer',
-                'IGNR': 'Genre',
-                'IKEY': 'Keywords',
-                'IMED': 'Medium',
-                'INAM': 'Title',
-                'IPRD': 'Product',
-                'ISBJ': 'Subject',
-                'ISFT': 'Software',
-                'ISRC': 'Source',
-                'ISRF': 'SourceForm',
-                'ITCH': 'Technician'
-            }
-            
-            for chunk_id, value in info_metadata.items():
-                if value:
-                    # Use standard mapping if available, otherwise use chunk ID
-                    element_name = info_mappings.get(chunk_id, chunk_id)
-                    elem = ET.SubElement(info_elem, element_name)
-                    elem.text = str(value)
-                    # Also store original chunk ID as attribute for reference
-                    if chunk_id in info_mappings:
-                        elem.set("chunkId", chunk_id)
-        
-        # Add XML metadata if available
-        if xml_metadata:
-            xml_elem = ET.SubElement(master_mob, "XmlMetadata")
-            
-            # Group XML metadata by prefix (ebucore, bwfmetaedit, etc.)
-            xml_groups = {}
-            for key, value in xml_metadata.items():
-                if '_' in key:
-                    prefix, field = key.split('_', 1)
-                    if prefix not in xml_groups:
-                        xml_groups[prefix] = {}
-                    xml_groups[prefix][field] = value
-                else:
-                    # Items without prefix go to generic group
-                    if 'generic' not in xml_groups:
-                        xml_groups['generic'] = {}
-                    xml_groups['generic'][key] = value
-            
-            # Create sub-elements for each XML type
-            for xml_type, fields in xml_groups.items():
-                if fields:  # Only create section if it has data
-                    type_elem = ET.SubElement(xml_elem, f"{xml_type.capitalize()}Data")
+        try:
+            with aaf2.open(output_path, 'w') as f:
+                # Set file identification
+                f.header['ObjectModelVersion'].value = 1
+                f.header['Version'].value = {'major': 1, 'minor': 2}
+                
+                # Update product identification
+                for ident in f.header['IdentificationList'].value:
+                    ident['ProductName'].value = "WAVsToAAF"
+                    ident['CompanyName'].value = "Jason Brodkey"
+                    ident['ProductVersionString'].value = __version__
+                    break
+                
+                # Create master mob for the audio file
+                master_mob = f.create.MasterMob()
+                master_mob.name = wav_metadata.get('filename', 'Unknown')
+                
+                # Set creation/modification times if available
+                if 'creation_time' in wav_metadata:
+                    try:
+                        creation_time = datetime.fromisoformat(wav_metadata['creation_time'])
+                        master_mob['CreationTime'].value = creation_time
+                        master_mob['LastModified'].value = creation_time
+                    except:
+                        pass
+                
+                # Add BEXT metadata as comments/descriptions
+                if bext_metadata:
+                    comments = []
+                    if bext_metadata.get('description'):
+                        comments.append(f"Description: {bext_metadata['description']}")
+                    if bext_metadata.get('originator'):
+                        comments.append(f"Originator: {bext_metadata['originator']}")
+                    if bext_metadata.get('originator_reference'):
+                        comments.append(f"Originator Reference: {bext_metadata['originator_reference']}")
+                    if bext_metadata.get('origination_date'):
+                        comments.append(f"Origination Date: {bext_metadata['origination_date']}")
+                    if bext_metadata.get('origination_time'):
+                        comments.append(f"Origination Time: {bext_metadata['origination_time']}")
                     
-                    for field_name, field_value in fields.items():
-                        if field_value and str(field_value).strip():
-                            # Clean field name for XML element
-                            clean_field = re.sub(r'[^a-zA-Z0-9_]', '', field_name)
-                            if clean_field:
-                                field_elem = ET.SubElement(type_elem, clean_field.capitalize())
-                                field_elem.text = str(field_value)
-        
-        # Add UCS metadata if available
-        if ucs_metadata:
-            ucs_elem = ET.SubElement(master_mob, "UCSMetadata")
+                    if comments:
+                        # Try to set comments if supported
+                        try:
+                            master_mob['Comments'].value = "; ".join(comments)
+                        except:
+                            # Fallback to using UserComments
+                            try:
+                                master_mob['UserComments'].value = "; ".join(comments)
+                            except:
+                                pass  # Comments not supported in this AAF version
+                
+                # Add INFO metadata as comments
+                if info_metadata:
+                    info_comments = []
+                    info_mappings = {
+                        'IART': 'Artist',
+                        'ICMT': 'Comment',
+                        'ICOP': 'Copyright',
+                        'ICRD': 'Creation Date',
+                        'IENG': 'Engineer',
+                        'IGNR': 'Genre',
+                        'IKEY': 'Keywords',
+                        'INAM': 'Title',
+                        'IPRD': 'Product',
+                        'ISBJ': 'Subject',
+                        'ISFT': 'Software',
+                        'ISRC': 'Source'
+                    }
+                    
+                    for chunk_id, value in info_metadata.items():
+                        if value:
+                            label = info_mappings.get(chunk_id, chunk_id)
+                            info_comments.append(f"{label}: {value}")
+                    
+                    if info_comments:
+                        try:
+                            existing_comments = master_mob.get('Comments', {}).get('value', '')
+                            all_comments = [existing_comments] if existing_comments else []
+                            all_comments.extend(info_comments)
+                            master_mob['Comments'].value = "; ".join(all_comments)
+                        except:
+                            # Store in a custom property or ignore if not supported
+                            pass
+                
+                # Add UCS category information
+                if ucs_metadata and 'primary_category' in ucs_metadata:
+                    category = ucs_metadata['primary_category']
+                    ucs_comment = f"UCS Category: {category['category']} > {category['subcategory']} (ID: {category['id']})"
+                    
+                    try:
+                        existing_comments = master_mob.get('Comments', {}).get('value', '')
+                        all_comments = [existing_comments] if existing_comments else []
+                        all_comments.append(ucs_comment)
+                        master_mob['Comments'].value = "; ".join(all_comments)
+                    except:
+                        # Store UCS data in name if comments aren't supported
+                        try:
+                            original_name = master_mob.name
+                            master_mob.name = f"{original_name} [{category['category']}]"
+                        except:
+                            pass
+                
+                # Create source mob with WAV descriptor
+                source_mob = f.create.SourceMob()
+                source_mob.name = f"{wav_metadata.get('filename', 'Unknown')}_Source"
+                
+                # Create WAVE descriptor
+                wave_descriptor = f.create.WAVEDescriptor()
+                wave_descriptor['SampleRate'].value = wav_metadata.get('sample_rate', 48000)
+                wave_descriptor['Length'].value = wav_metadata.get('frames', 0)
+                wave_descriptor['ContainerFormat'].value = f.dictionary.lookup_containerdef("AAF")
+                
+                # Add WAV format summary (required property)
+                fmt_data = self._get_wave_fmt(wav_metadata.get('filepath'))
+                if fmt_data:
+                    wave_descriptor['Summary'].value = fmt_data
+                else:
+                    # Create minimal WAV format data if not found
+                    channels = wav_metadata.get('channels', 1)
+                    sample_rate = wav_metadata.get('sample_rate', 48000)
+                    sample_width = wav_metadata.get('sample_width', 2)
+                    fmt_data = struct.pack('<HHIIHH', 
+                                         1,  # format tag (PCM)
+                                         channels,  # channels
+                                         sample_rate,  # sample rate
+                                         sample_rate * channels * sample_width,  # byte rate
+                                         channels * sample_width,  # block align
+                                         sample_width * 8)  # bits per sample
+                    wave_descriptor['Summary'].value = fmt_data
+                
+                # Add locator pointing to the original WAV file
+                if wav_metadata.get('filepath'):
+                    locator = f.create.NetworkLocator()
+                    locator['URLString'].value = f"file://{wav_metadata['filepath']}"
+                    wave_descriptor['Locator'].append(locator)
+                
+                # Set the descriptor on the source mob
+                source_mob['EssenceDescription'].value = wave_descriptor
+                
+                # Create audio slot for the source mob FIRST
+                edit_rate = wav_metadata.get('sample_rate', 48000)
+                source_audio_slot = source_mob.create_timeline_slot(edit_rate)
+                source_audio_slot.name = "Audio Track"
+                
+                # Create a filler segment for the source slot
+                source_filler = f.create.Filler()
+                source_filler['DataDefinition'].value = f.dictionary.lookup_datadef("sound")
+                source_filler['Length'].value = wav_metadata.get('frames', 0)
+                source_audio_slot.segment = source_filler
+                
+                # Create timeline slot for the master mob
+                master_timeline_slot = master_mob.create_timeline_slot(edit_rate)
+                master_timeline_slot.name = "Audio"
+                
+                # Create source clip referencing the source mob
+                source_clip = f.create.SourceClip()
+                source_clip['DataDefinition'].value = f.dictionary.lookup_datadef("sound")
+                source_clip['Length'].value = wav_metadata.get('frames', 0)
+                source_clip['StartTime'].value = 0
+                source_clip['SourceID'].value = source_mob.mob_id
+                source_clip['SourceMobSlotID'].value = source_audio_slot.slot_id
+                
+                master_timeline_slot.segment = source_clip
+                
+                # Add mobs to the content
+                f.content.mobs.append(master_mob)
+                f.content.mobs.append(source_mob)
+                
+                return output_path
+                
+        except Exception as e:
+            raise Exception(f"Error creating AAF file: {e}")
+    
+    def _get_wave_fmt(self, wav_path: str) -> bytes:
+        """Extract WAV format chunk for Summary property"""
+        if not wav_path or not os.path.exists(wav_path):
+            return None
             
-            # Primary category
-            if 'primary_category' in ucs_metadata:
-                primary = ucs_metadata['primary_category']
-                primary_elem = ET.SubElement(ucs_elem, "PrimaryCategory")
-                ET.SubElement(primary_elem, "ID").text = primary['id']
-                ET.SubElement(primary_elem, "FullName").text = primary['full_name']
-                ET.SubElement(primary_elem, "Category").text = primary['category']
-                ET.SubElement(primary_elem, "SubCategory").text = primary['subcategory']
-                ET.SubElement(primary_elem, "MatchScore").text = str(primary['score'])
-            
-            # Alternative categories
-            if 'alternative_categories' in ucs_metadata and ucs_metadata['alternative_categories']:
-                alternatives_elem = ET.SubElement(ucs_elem, "AlternativeCategories")
-                for alt in ucs_metadata['alternative_categories']:
-                    alt_elem = ET.SubElement(alternatives_elem, "Category")
-                    ET.SubElement(alt_elem, "ID").text = alt['id']
-                    ET.SubElement(alt_elem, "FullName").text = alt['full_name']
-                    ET.SubElement(alt_elem, "Category").text = alt['category']
-                    ET.SubElement(alt_elem, "SubCategory").text = alt['subcategory']
-                    ET.SubElement(alt_elem, "MatchScore").text = str(alt['score'])
-        
-        # Timeline Mob Slot
-        timeline_slot = ET.SubElement(master_mob, "TimelineMobSlot")
-        timeline_slot.set("SlotID", "1")
-        ET.SubElement(timeline_slot, "SlotName").text = "Audio"
-        ET.SubElement(timeline_slot, "EditRate").text = str(wav_metadata.get('sample_rate', 48000))
-        
-        # Source Clip
-        source_clip = ET.SubElement(timeline_slot, "SourceClip")
-        ET.SubElement(source_clip, "StartTime").text = "0"
-        ET.SubElement(source_clip, "Length").text = str(wav_metadata.get('frames', 0))
-        
-        # Audio properties
-        audio_props = ET.SubElement(source_clip, "AudioProperties")
-        ET.SubElement(audio_props, "SampleRate").text = str(wav_metadata.get('sample_rate', 0))
-        ET.SubElement(audio_props, "Channels").text = str(wav_metadata.get('channels', 0))
-        ET.SubElement(audio_props, "SampleWidth").text = str(wav_metadata.get('sample_width', 0))
-        ET.SubElement(audio_props, "Duration").text = wav_metadata.get('duration_timecode', '00:00:00:00')
-        ET.SubElement(audio_props, "FileSize").text = str(wav_metadata.get('file_size', 0))
-        
-        # File Reference
-        file_ref = ET.SubElement(source_clip, "FileReference")
-        ET.SubElement(file_ref, "FileName").text = wav_metadata.get('filename', '')
-        ET.SubElement(file_ref, "FilePath").text = wav_metadata.get('filepath', '')
-        
-        return self._prettify_xml(root)
+        try:
+            with open(wav_path, 'rb') as f:
+                # Skip RIFF header
+                f.seek(12)
+                while True:
+                    chunk_header = f.read(8)
+                    if len(chunk_header) < 8:
+                        break
+                    chunk_id = chunk_header[:4].decode('ascii', errors='ignore')
+                    chunk_size = struct.unpack('<I', chunk_header[4:8])[0]
+                    
+                    if chunk_id == 'fmt ':
+                        return f.read(chunk_size)
+                    else:
+                        f.seek(chunk_size, 1)
+                        if chunk_size % 2:  # Align to word boundary
+                            f.seek(1, 1)
+        except:
+            pass
+        return None
     
     def _generate_mob_id(self, filename: str) -> str:
-        """Generate a simple Mob ID based on filename"""
-        # Simple hash-based ID generation
+        """Generate a simple Mob ID based on filename (kept for compatibility)"""
         import hashlib
         hash_obj = hashlib.md5(filename.encode())
         hash_hex = hash_obj.hexdigest()
         return f"urn:uuid:{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
-    
-    def _prettify_xml(self, elem: ET.Element) -> str:
-        """Return a pretty-printed XML string"""
-        rough_string = ET.tostring(elem, 'unicode')
-        reparsed = minidom.parseString(rough_string)
-        return reparsed.toprettyxml(indent="  ")
 
 class WAVsToAAFProcessor:
     """Main processor class for converting WAV files to AAF format"""
@@ -857,15 +902,13 @@ class WAVsToAAFProcessor:
                     category = ucs_metadata['primary_category']
                     print(f"  UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
                 
-                # Generate AAF XML
-                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata)
-                
-                # Write output file
-                output_filename = wav_file.stem + '.aaf.xml'
+                # Generate AAF file
+                output_filename = wav_file.stem + '.aaf'
                 output_file = output_path / output_filename
                 
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    f.write(aaf_xml)
+                aaf_file_path = self.generator.create_aaf_file(
+                    wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, str(output_file)
+                )
                 
                 print(f"  Created: {output_filename}")
                 processed += 1
@@ -925,12 +968,10 @@ class WAVsToAAFProcessor:
                 category = ucs_metadata['primary_category']
                 print(f"UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
             
-            # Generate AAF XML
-            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata)
-            
-            # Write output file
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(aaf_xml)
+            # Generate AAF file
+            output_file_path = self.generator.create_aaf_file(
+                wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, output_file
+            )
             
             print(f"Created: {output_file}")
             return 0
@@ -952,14 +993,14 @@ def main():
     
     # Use argparse for command-line mode
     parser = argparse.ArgumentParser(
-        description="Convert WAV files to simplified AAF XML format",
+        description="Convert WAV files to Advanced Authoring Format (AAF)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s ./audio_files ./aaf_output    # Process directory
   %(prog)s ./audio_files                 # Output to ./aaf_output
   %(prog)s                               # Process current dir
-  %(prog)s -f input.wav output.aaf.xml   # Process single file
+  %(prog)s -f input.wav output.aaf       # Process single file
         """
     )
     
@@ -983,7 +1024,7 @@ Examples:
 
 def interactive_mode() -> int:
     """Interactive mode for user-friendly input prompting"""
-    print(f"WAVsToAAF v{__version__} - Convert WAV files to AAF XML format")
+    print(f"WAVsToAAF v{__version__} - Convert WAV files to AAF format")
     print("Copyright (c) 2025 Jason Brodkey. All rights reserved.")
     print()
     
@@ -1008,8 +1049,8 @@ def interactive_mode() -> int:
     
     # Prompt for output path
     if is_single_file:
-        default_output = os.path.splitext(input_path)[0] + '.aaf.xml'
-        raw_output = input(f"Enter the output AAF XML file path (RETURN for '{default_output}'): ").strip()
+        default_output = os.path.splitext(input_path)[0] + '.aaf'
+        raw_output = input(f"Enter the output AAF file path (RETURN for '{default_output}'): ").strip()
         output_path = sanitize_path(raw_output) if raw_output else default_output
     else:
         default_output = os.path.join(os.path.dirname(input_path), 'aaf_output')

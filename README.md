@@ -1,22 +1,23 @@
 # WAVsToAAF
 
-Convert WAV files to simplified AAF (Advanced Authoring Format) XML files with embedded metadata.
+Convert WAV files to Advanced Authoring Format (AAF) files with embedded metadata.
 
 ## Overview
 
-WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, embedded XML chunks, and UCS categorization, then generates simplified AAF XML files suitable for media management workflows.
+WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, embedded XML chunks, and UCS categorization, then generates actual AAF files suitable for professional media workflows.
 
 ## Features
 
 - **Batch Processing**: Process entire directories of WAV files
 - **Single File Mode**: Process individual files
+- **Real AAF Files**: Creates actual .aaf files (not XML) using pyaaf2
 - **BEXT Support**: Extracts broadcast metadata from BEXT chunks
 - **LIST-INFO Support**: Extracts RIFF INFO metadata (IART, ICMT, ICOP, INAM, etc.)
 - **XML Chunk Support**: Extracts embedded XML metadata (EBU Core, BWF MetaEdit, Pro Tools, etc.)
 - **UCS Integration**: Universal Category System sound categorization
 - **Audio Metadata**: Captures sample rate, channels, duration, file size
-- **Timecode Generation**: Converts duration to timecode format
-- **XML Output**: Creates well-formatted AAF XML files
+- **Linked Media**: Creates AAF files that reference original WAV files
+- **Professional Workflow**: Compatible with Avid Media Composer, Pro Tools, and other AAF-compatible software
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 
 ## Supported Metadata
@@ -66,6 +67,18 @@ WAVsToAAF is a Python utility that scans directories for WAV files, extracts com
 ### Requirements
 - Python 3.7 or higher
 - Standard library only (no external dependencies required)
+## Installation
+
+### Prerequisites
+- Python 3.7 or higher
+- pip (Python package installer)
+
+### Dependencies
+Install required Python packages:
+
+```bash
+pip install pyaaf2
+```
 
 ### Setup
 ```bash
@@ -88,7 +101,7 @@ python wav_to_aaf.py
 
 The script will prompt you for:
 - **Input path**: WAV directory or single WAV file
-- **Output path**: AAF XML output directory or file (with smart defaults)
+- **Output path**: AAF output directory or file (with smart defaults)
 
 ### Command Line Interface
 
@@ -107,7 +120,7 @@ python wav_to_aaf.py ./audio_files ./my_aaf_output
 #### Process Single File
 ```bash
 # Process single WAV file
-python wav_to_aaf.py -f input.wav output.aaf.xml
+python wav_to_aaf.py -f input.wav output.aaf
 ```
 
 #### Help and Version
@@ -131,20 +144,26 @@ processor = WAVsToAAFProcessor()
 result = processor.process_directory('./audio_files', './aaf_output')
 
 # Process single file
-result = processor.process_single_file('input.wav', 'output.aaf.xml')
+result = processor.process_single_file('input.wav', 'output.aaf')
 ```
 
 ## Output Format
 
-The generated AAF XML files contain:
+The generated AAF files contain:
+
+### AAF Structure
+- Master Mob with embedded metadata
+- Source Mob with WAVE descriptor
+- File references to original WAV files
+- Timeline slots with proper audio mapping
 
 ### Audio Properties
 - Sample rate, channels, bit depth
-- Duration in seconds and timecode
+- Duration in frames and timecode
 - File size and timestamps
 
 ### BEXT Metadata (if present)
-- Description and originator information
+- Description and originator information embedded in comments
 - Origination date and time
 - Time reference and UMID
 - Loudness metadata (EBU R128)
@@ -152,33 +171,44 @@ The generated AAF XML files contain:
 ### UCS Categorization
 - Automatic sound categorization using Universal Category System
 - Category matching based on filename and BEXT description
-- Primary and alternative category suggestions
+- Primary category information embedded in mob name/comments
 - Match confidence scoring
 
-### Example Output Structure
-```xml
-<?xml version="1.0" ?>
-<AAF xmlns="http://www.aafassociation.org/aafxml" version="1.1">
-  <Header>
-    <Version>1.1</Version>
-    <Generator>WAVsToAAF v1.0.0</Generator>
-    <CreationTime>2025-11-03T...</CreationTime>
-  </Header>
-  <ContentStorage>
-    <MasterMob MobID="urn:uuid:...">
-      <Name>audio_file.wav</Name>
-      <BextMetadata>
-        <Description>Field recording</Description>
-        <Originator>Sound Engineer</Originator>
-        <OriginationDate>2025-11-03</OriginationDate>
-        <!-- ... more BEXT data ... -->
-      </BextMetadata>
-      <UCSMetadata>
-        <PrimaryCategory>
-          <ID>AMBNatur</ID>
-          <FullName>AMBIENCE NATURE</FullName>
-          <Category>AMBIENCE</Category>
-          <SubCategory>NATURE</SubCategory>
+### AAF File Benefits
+- **Professional Compatibility**: Works with Avid Media Composer, Pro Tools, and other AAF-compatible software
+- **Linked Media**: References original WAV files rather than copying/converting audio data
+- **Metadata Preservation**: BEXT, INFO, and UCS data embedded in AAF structure
+- **Timeline Ready**: Can be imported directly into editing timelines
+- **Lossless**: No audio quality degradation as files are linked, not converted
+
+## Universal Category System (UCS) Integration
+
+WAVsToAAF automatically categorizes sounds using the Universal Category System v8.2.1:
+
+- **Automatic Detection**: Analyzes filenames and BEXT descriptions
+- **753 Categories**: Complete UCS category database included
+- **Smart Matching**: Keyword and pattern-based categorization
+- **Primary Category**: Best match embedded in AAF metadata
+- **Confidence Scoring**: Match quality assessment
+
+### Category Matching Process:
+1. **Filename Analysis**: Extracts keywords from WAV filename
+2. **BEXT Integration**: Uses BEXT description if available  
+3. **Keyword Matching**: Compares against UCS synonyms and keywords
+4. **Scoring Algorithm**: Calculates match confidence
+5. **Result Selection**: Returns best match for embedding in AAF
+
+## BEXT Chunk Support
+
+WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks according to EBU R68-2000 standard:
+
+- **Description**: Textual description of the sound
+- **Originator**: Name of the originator/organization
+- **Originator Reference**: Unique reference for the originator
+- **Origination Date/Time**: When the material was first created
+- **Time Reference**: Sample count since midnight
+- **UMID**: Unique Material Identifier
+- **Loudness Metadata**: EBU R128 loudness values (if present)
           <MatchScore>8.5</MatchScore>
         </PrimaryCategory>
       </UCSMetadata>
@@ -196,31 +226,6 @@ The generated AAF XML files contain:
 
 ## UCS (Universal Category System) Support
 
-WAVsToAAF automatically categorizes sounds using the Universal Category System v8.2.1:
-
-- **Automatic Detection**: Analyzes filenames and BEXT descriptions
-- **753 Categories**: Complete UCS category database included
-- **Smart Matching**: Keyword and pattern-based categorization
-- **Multiple Suggestions**: Primary category plus alternatives
-- **Confidence Scoring**: Match quality assessment
-
-### Category Matching Process:
-1. **Filename Analysis**: Extracts keywords from WAV filename
-2. **BEXT Integration**: Uses BEXT description if available  
-3. **Keyword Matching**: Compares against UCS synonyms and keywords
-4. **Scoring Algorithm**: Calculates match confidence
-5. **Result Ranking**: Returns best matches with scores
-
-WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks according to EBU R68-2000 standard:
-
-- **Description**: Textual description of the sound
-- **Originator**: Name of the originator/organization
-- **Originator Reference**: Unique reference for the originator
-- **Origination Date/Time**: When the material was first created
-- **Time Reference**: Sample count since midnight
-- **UMID**: Unique Material Identifier
-- **Loudness Metadata**: EBU R128 loudness values (if present)
-
 ## Error Handling
 
 - Gracefully handles corrupted or unsupported files
@@ -230,19 +235,39 @@ WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks a
 
 ## Limitations
 
-- Generates simplified AAF XML (not full AAF binary format)
-- BEXT parsing supports standard EBU R68-2000 format
-- No support for other metadata chunks (LIST, etc.)
-- Timecode assumes 25fps for frame calculations
+- Creates AAF files with media links (not embedded audio)
+- Requires original WAV files to remain accessible for playback
+- Comments/metadata support depends on AAF version capabilities
 
 ## Compatibility
 
 - **Python**: 3.7+
 - **Platforms**: Windows, macOS, Linux
 - **WAV Formats**: Standard PCM WAV files
-- **Dependencies**: None (uses Python standard library)
+- **Dependencies**: pyaaf2
+- **AAF Software**: Avid Media Composer, Pro Tools, DaVinci Resolve, and other AAF-compatible applications
 
 ## Version History
+
+### 2.0.0 (2025-11-03)
+- **Major Update**: Now creates actual AAF files instead of XML
+- Added pyaaf2 dependency for real AAF file generation
+- Improved metadata embedding in AAF structure
+- Enhanced compatibility with professional audio/video software
+- Interactive mode improvements
+
+### 1.3.0 (2025-11-03)
+- Added interactive mode for user-friendly input prompting
+- Added XML chunk support (EBU Core, BWF MetaEdit, Pro Tools)
+- Path sanitization and smart defaults
+
+### 1.2.0 (2025-11-03) 
+- Added XML chunk extraction and parsing
+- Enhanced metadata extraction capabilities
+
+### 1.1.0 (2025-11-03)
+- Added LIST-INFO chunk support
+- Expanded metadata extraction
 
 ### 1.0.0 (2025-11-03)
 - Initial release
@@ -258,7 +283,7 @@ Copyright (c) 2025 Jason Brodkey. All rights reserved.
 ## Related Projects
 
 - **WAVsToALE**: Convert WAV files to Avid Log Exchange format
-- **AAF SDK**: Full AAF binary format support (requires C++ compilation)
+- **pyaaf2**: Python library for reading and writing AAF files
 
 ## Support
 
