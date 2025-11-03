@@ -4,18 +4,54 @@ Convert WAV files to simplified AAF (Advanced Authoring Format) XML files with e
 
 ## Overview
 
-WAVsToAAF is a Python utility that scans directories for WAV files, extracts audio metadata and BEXT (Broadcast Extension) chunk data, and generates simplified AAF XML files suitable for media management workflows.
+WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, and UCS categorization, then generates simplified AAF XML files suitable for media management workflows.
 
 ## Features
 
 - **Batch Processing**: Process entire directories of WAV files
 - **Single File Mode**: Process individual files
 - **BEXT Support**: Extracts broadcast metadata from BEXT chunks
+- **LIST-INFO Support**: Extracts RIFF INFO metadata (IART, ICMT, ICOP, INAM, etc.)
 - **UCS Integration**: Universal Category System sound categorization
 - **Audio Metadata**: Captures sample rate, channels, duration, file size
 - **Timecode Generation**: Converts duration to timecode format
 - **XML Output**: Creates well-formatted AAF XML files
 - **Cross-Platform**: Works on Windows, macOS, and Linux
+
+## Supported Metadata
+
+### Basic WAV Properties
+- Sample rate, channels, bit depth
+- File size and duration
+- Creation and modification times
+
+### BEXT Chunk (Broadcast Extension)
+- Description, Originator, Originator Reference
+- Origination Date/Time, Time Reference
+- UMID (Unique Material Identifier)
+- Loudness metadata (LUFS, True Peak, etc.)
+
+### LIST-INFO Chunks (RIFF INFO)
+- **IART**: Artist
+- **ICMT**: Comment
+- **ICOP**: Copyright
+- **ICRD**: Creation Date
+- **IENG**: Engineer
+- **IGNR**: Genre
+- **IKEY**: Keywords
+- **IMED**: Medium
+- **INAM**: Title/Name
+- **IPRD**: Product/Album
+- **ISBJ**: Subject
+- **ISFT**: Software
+- **ISRC**: Source
+- **ISRF**: Source Form
+- **ITCH**: Technician
+
+### UCS Categorization
+- Primary category matching with confidence scores
+- Alternative category suggestions
+- 753 predefined sound categories
 
 ## Installation
 

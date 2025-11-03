@@ -4,8 +4,15 @@ WAVsToAAF - Convert WAV files to simplified AAF XML format
 
 Copyright (c) 2025 Jason Brodkey. All rights reserved.
 
-This script scans directories for WAV files, extracts audio metadata and BEXT data,
-and generates simplified AAF XML files suitable for media management workflows.
+This script scans directories for WAV files, extracts audio metadata including BEXT,
+LIST-INFO chunks, and UCS categorization, then generates simplified AAF XML files 
+suitable for media management workflows.
+
+Supported metadata:
+- Standard WAV properties (sample rate, channels, duration, etc.)
+- BEXT chunk (broadcast audio metadata)
+- LIST-INFO chunks (IART, ICMT, ICOP, INAM, etc.)
+- UCS categorization (Universal Category System)
 
 Usage:
     python wav_to_aaf.py [input_directory] [output_directory]
@@ -16,7 +23,7 @@ Examples:
     python wav_to_aaf.py               # scans current dir, outputs to ./aaf_output
 
 Author: Jason Brodkey
-Version: 1.0.0
+Version: 1.1.0
 Date: 2025-11-03
 """
 
@@ -27,13 +34,14 @@ import struct
 import argparse
 import csv
 import re
+import io
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Jason Brodkey"
 
 class WAVMetadataExtractor:
@@ -101,6 +109,113 @@ class WAVMetadataExtractor:
             print(f"Error reading BEXT from {wav_path}: {e}")
         
         return bext_data
+    
+    def extract_all_metadata_chunks(self, wav_path: str) -> Dict:
+        """Extract all metadata chunks from WAV file (BEXT, LIST-INFO, XML)"""
+        all_metadata = {}
+        
+        try:
+            # Read entire file into memory for efficient chunk parsing
+            with open(wav_path, 'rb') as f:
+                data = f.read()
+            
+            # Parse different chunk types
+            all_metadata.update(self._parse_bext_chunk_from_data(data))
+            all_metadata.update(self._parse_info_chunks(data))
+            # TODO: Add XML chunk parsing in future enhancement
+            
+        except Exception as e:
+            print(f"Error reading metadata chunks from {wav_path}: {e}")
+        
+        return all_metadata
+    
+    def _parse_bext_chunk_from_data(self, data: bytes) -> Dict:
+        """Parse BEXT chunk from raw file data"""
+        bext_metadata = {}
+        
+        try:
+            bext_start = data.find(b'bext')
+            if bext_start != -1:
+                # Skip the 'bext' identifier and chunk size (8 bytes total)
+                bext_start += 8
+                bext_raw = data[bext_start:bext_start + 602]  # Standard BEXT size
+                bext_metadata = self._parse_bext_chunk(bext_raw)
+        except Exception as e:
+            print(f"Error parsing BEXT from data: {e}")
+        
+        return bext_metadata
+    
+    def _parse_info_chunks(self, data: bytes) -> Dict:
+        """Parse LIST-INFO chunks from WAV file data"""
+        info_metadata = {}
+        
+        try:
+            offset = 0
+            while True:
+                # Find next LIST chunk
+                list_start = data.find(b'LIST', offset)
+                if list_start == -1:
+                    break
+                
+                # Check if we have enough data for the LIST header
+                if list_start + 12 > len(data):
+                    break
+                
+                # Read LIST chunk size (4 bytes little-endian)
+                list_size = struct.unpack('<I', data[list_start + 4:list_start + 8])[0]
+                list_type = data[list_start + 8:list_start + 12]
+                
+                # We only care about INFO lists
+                if list_type == b'INFO':
+                    # Start of INFO subchunks
+                    sub_offset = list_start + 12
+                    end_of_list = list_start + 8 + list_size
+                    
+                    while sub_offset + 8 <= end_of_list and sub_offset + 8 <= len(data):
+                        # Read subchunk header
+                        chunk_id = data[sub_offset:sub_offset + 4]
+                        chunk_size = struct.unpack('<I', data[sub_offset + 4:sub_offset + 8])[0]
+                        
+                        # Read chunk data
+                        data_start = sub_offset + 8
+                        data_end = data_start + chunk_size
+                        
+                        if data_end > len(data) or data_end > end_of_list:
+                            break
+                        
+                        # Extract and clean the string data
+                        chunk_data = data[data_start:data_end].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+                        
+                        if chunk_data:  # Only add non-empty data
+                            try:
+                                chunk_name = chunk_id.decode('ascii')
+                                info_metadata[chunk_name] = self._sanitize_string(chunk_data)
+                            except Exception:
+                                info_metadata[str(chunk_id)] = self._sanitize_string(chunk_data)
+                        
+                        # Move to next subchunk (chunks are word-aligned)
+                        pad = 1 if (chunk_size % 2) == 1 else 0
+                        sub_offset = data_end + pad
+                
+                # Move forward to look for another LIST chunk
+                offset = list_start + 4
+                
+        except Exception as e:
+            print(f"Error parsing INFO chunks: {e}")
+        
+        return info_metadata
+    
+    def _sanitize_string(self, value: str) -> str:
+        """Clean string data for metadata"""
+        if value:
+            # Replace tabs, newlines, and carriage returns with spaces
+            cleaned = value.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+            # Remove non-printable characters
+            cleaned = ''.join(char for char in cleaned if char.isprintable())
+            # Collapse multiple spaces into single space and strip
+            cleaned = ' '.join(cleaned.split())
+            return cleaned
+        return ""
     
     def _parse_bext_chunk(self, bext_data: bytes) -> Dict:
         """Parse BEXT chunk binary data"""
@@ -317,8 +432,8 @@ class AAFGenerator:
     def __init__(self):
         self.namespace = "http://www.aafassociation.org/aafxml"
     
-    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, ucs_metadata: Dict = None) -> str:
-        """Create simplified AAF XML from WAV, BEXT, and UCS metadata"""
+    def create_aaf_xml(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, ucs_metadata: Dict = None) -> str:
+        """Create simplified AAF XML from WAV, BEXT, INFO, and UCS metadata"""
         
         # Create root element
         root = ET.Element("AAF")
@@ -353,6 +468,39 @@ class AAFGenerator:
                 if value is not None and value != "":
                     elem = ET.SubElement(bext_elem, key.replace('_', '').title())
                     elem.text = str(value)
+        
+        # Add LIST-INFO metadata if available
+        if info_metadata:
+            info_elem = ET.SubElement(master_mob, "InfoMetadata")
+            
+            # Standard INFO chunk mappings
+            info_mappings = {
+                'IART': 'Artist',
+                'ICMT': 'Comment', 
+                'ICOP': 'Copyright',
+                'ICRD': 'CreationDate',
+                'IENG': 'Engineer',
+                'IGNR': 'Genre',
+                'IKEY': 'Keywords',
+                'IMED': 'Medium',
+                'INAM': 'Title',
+                'IPRD': 'Product',
+                'ISBJ': 'Subject',
+                'ISFT': 'Software',
+                'ISRC': 'Source',
+                'ISRF': 'SourceForm',
+                'ITCH': 'Technician'
+            }
+            
+            for chunk_id, value in info_metadata.items():
+                if value:
+                    # Use standard mapping if available, otherwise use chunk ID
+                    element_name = info_mappings.get(chunk_id, chunk_id)
+                    elem = ET.SubElement(info_elem, element_name)
+                    elem.text = str(value)
+                    # Also store original chunk ID as attribute for reference
+                    if chunk_id in info_mappings:
+                        elem.set("chunkId", chunk_id)
         
         # Add UCS metadata if available
         if ucs_metadata:
@@ -458,11 +606,28 @@ class WAVsToAAFProcessor:
                 
                 # Extract metadata
                 wav_metadata = self.extractor.extract_basic_info(str(wav_file))
-                bext_metadata = self.extractor.extract_bext_chunk(str(wav_file))
                 
                 if not wav_metadata:
                     print(f"  Skipping {wav_file.name}: Could not read metadata")
                     continue
+                
+                # Extract all metadata chunks
+                all_chunks = self.extractor.extract_all_metadata_chunks(str(wav_file))
+                
+                # Separate chunk types
+                bext_metadata = {k: v for k, v in all_chunks.items() if k in [
+                    'description', 'originator', 'originator_reference', 'origination_date', 
+                    'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
+                    'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
+                ]}
+                
+                info_metadata = {k: v for k, v in all_chunks.items() if k not in bext_metadata}
+                
+                # Show INFO metadata found
+                if info_metadata:
+                    info_items = [f"{k}={v}" for k, v in info_metadata.items() if v]
+                    if info_items:
+                        print(f"  INFO metadata: {', '.join(info_items[:3])}{'...' if len(info_items) > 3 else ''}")
                 
                 # UCS categorization
                 ucs_metadata = self.ucs_processor.categorize_sound(
@@ -475,7 +640,7 @@ class WAVsToAAFProcessor:
                     print(f"  UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
                 
                 # Generate AAF XML
-                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, ucs_metadata)
+                aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, ucs_metadata)
                 
                 # Write output file
                 output_filename = wav_file.stem + '.aaf.xml'
@@ -501,11 +666,26 @@ class WAVsToAAFProcessor:
             
             # Extract metadata
             wav_metadata = self.extractor.extract_basic_info(wav_file)
-            bext_metadata = self.extractor.extract_bext_chunk(wav_file)
             
             if not wav_metadata:
                 print(f"Error: Could not read metadata from {wav_file}")
                 return 1
+            
+            # Extract all metadata chunks
+            all_chunks = self.extractor.extract_all_metadata_chunks(wav_file)
+            
+            # Separate chunk types
+            bext_metadata = {k: v for k, v in all_chunks.items() if k in [
+                'description', 'originator', 'originator_reference', 'origination_date', 
+                'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
+                'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
+            ]}
+            
+            info_metadata = {k: v for k, v in all_chunks.items() if k not in bext_metadata}
+            
+            # Show INFO metadata found
+            if info_metadata:
+                print(f"INFO metadata found: {list(info_metadata.keys())}")
             
             # UCS categorization
             ucs_metadata = self.ucs_processor.categorize_sound(
@@ -518,7 +698,7 @@ class WAVsToAAFProcessor:
                 print(f"UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
             
             # Generate AAF XML
-            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, ucs_metadata)
+            aaf_xml = self.generator.create_aaf_xml(wav_metadata, bext_metadata, info_metadata, ucs_metadata)
             
             # Write output file
             with open(output_file, 'w', encoding='utf-8') as f:
