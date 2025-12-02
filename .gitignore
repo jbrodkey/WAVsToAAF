@@ -18,6 +18,12 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
 # Virtual envs
 .venv/
 venv/
@@ -34,3 +40,12 @@ env/
 .idea/
 *.swp
 *.swo
+
+# Test data and archives
+*.zip
+embedded_test_aafs.zip
+
+# Alternative/unused tools
+AAFOTIOConverter
+wav_to_otio_aaf.py
+aaf_embedder/
