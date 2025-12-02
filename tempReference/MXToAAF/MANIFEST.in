@@ -1,0 +1,29 @@
+# Include key project documentation and config files
+include README.md
+include PACKAGING.md
+include AAF_PAN_IMPLEMENTATION.md
+include requirements.txt
+
+# Include package source code
+recursive-include mxto_aaf *.py
+
+# Exclude local-only content and generated artifacts
+prune artifacts
+# MANIFEST.in doesn't handle spaces in patterns well; use a wildcard
+# to prune any directory starting with "Sample" (covers "Sample Media")
+prune Sample*
+prune .vscode
+prune .pytest_cache
+prune WAVsToAAF
+prune WAVsToALE
+prune tests
+
+# Exclude common OS/editor caches
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .DS_Store
+
+# Exclude temporary/log files
+global-exclude *.tmp
+global-exclude *.log

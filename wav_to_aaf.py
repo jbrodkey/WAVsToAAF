@@ -47,9 +47,92 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 import aaf2
+import aaf2.auid
+import aaf2.rational
+import aaf2.misc
 
 __version__ = "2.0.0"
 __author__ = "Jason Brodkey"
+
+# AAF Pan Control AUIDs
+AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
+AAF_OPERATIONDEF_MONOAUDIOPAN = aaf2.auid.AUID("9d2ea893-0968-11d3-8a38-0050040ef7d2")
+
+
+def _apply_pan_to_slot(f, mslot, mclip, pan_value: float, length_val: int):
+    """
+    Add pan control to a master timeline slot using OperationGroup with VaryingValue.
+    
+    Args:
+        f: AAF file handle
+        mslot: Master timeline slot
+        mclip: Source clip to wrap
+        pan_value: Pan position (-1.0 = left, 0.0 = center, 1.0 = right)
+        length_val: Length in samples/frames
+    """
+    try:
+        # Register ParameterDef for Pan
+        typedef = f.dictionary.lookup_typedef("Rational")
+        param_def = f.create.ParameterDef(AAF_PARAMETERDEF_PAN, "Pan", "Pan", typedef)
+        try:
+            f.dictionary.register_def(param_def)
+        except Exception:
+            # Already registered
+            param_def = f.dictionary.lookup_def(AAF_PARAMETERDEF_PAN)
+        
+        # Register InterpolationDef
+        try:
+            interp_def = f.create.InterpolationDef(
+                aaf2.misc.LinearInterp, "LinearInterp", "LinearInterp"
+            )
+            f.dictionary.register_def(interp_def)
+        except Exception:
+            interp_def = f.dictionary.lookup_def(aaf2.misc.LinearInterp)
+        
+        # Register OperationDef for MonoAudioPan
+        try:
+            opdef = f.create.OperationDef(AAF_OPERATIONDEF_MONOAUDIOPAN, "Audio Pan")
+            opdef.media_kind = "sound"
+            opdef["NumberInputs"].value = 1
+            f.dictionary.register_def(opdef)
+        except Exception:
+            opdef = f.dictionary.lookup_def(AAF_OPERATIONDEF_MONOAUDIOPAN)
+        
+        # Create OperationGroup
+        opgroup = f.create.OperationGroup(opdef)
+        opgroup.media_kind = "sound"
+        opgroup.length = int(length_val)
+        
+        # Create pan control points - MUST use Rational, not float!
+        if pan_value == 0.0:
+            pan_rational = aaf2.rational.AAFRational("0/1")
+        elif pan_value < 0:
+            pan_rational = aaf2.rational.AAFRational("-1/1")
+        else:
+            pan_rational = aaf2.rational.AAFRational("1/1")
+        
+        c1 = f.create.ControlPoint()
+        c1["ControlPointSource"].value = 2
+        c1["Time"].value = aaf2.rational.AAFRational(f"0/{int(length_val)}")
+        c1["Value"].value = pan_rational
+        
+        c2 = f.create.ControlPoint()
+        c2["ControlPointSource"].value = 2
+        c2["Time"].value = aaf2.rational.AAFRational(f"{int(length_val) - 1}/{int(length_val)}")
+        c2["Value"].value = pan_rational
+        
+        varying_value = f.create.VaryingValue()
+        varying_value.parameterdef = param_def
+        varying_value["Interpolation"].value = interp_def
+        varying_value["PointList"].extend([c1, c2])
+        
+        opgroup.parameters.append(varying_value)
+        opgroup.segments.append(mclip)
+        mslot.segment = opgroup
+        
+    except Exception:
+        # Fallback: use clip without pan control
+        mslot.segment = mclip
 
 
 def create_deterministic_umid(wav_path: Path, mob_type: str = "master", tape_mode: bool = False) -> aaf2.mobid.MobID:
@@ -796,7 +879,7 @@ class AAFGenerator:
 
                     # Create MasterMob and wire channels
                     master_mob = f.create.MasterMob(str(wav_path.stem))
-                    for source_mob, src_slot in source_mobs:
+                    for ch_idx, (source_mob, src_slot) in enumerate(source_mobs, start=1):
                         mslot = master_mob.create_timeline_slot(sample_rate)
                         mslot.name = wav_metadata.get('filename', 'Unknown')
                         mslot.edit_rate = sample_rate
@@ -806,7 +889,18 @@ class AAFGenerator:
                         mclip['StartTime'].value = 0
                         mclip['SourceID'].value = source_mob.mob_id
                         mclip['SourceMobSlotID'].value = src_slot.slot_id
-                        mslot.segment = mclip
+                        
+                        # Apply pan based on source mob count
+                        if len(source_mobs) == 2:
+                            # Stereo: channel 1 = left (-1.0), channel 2 = right (1.0)
+                            pan_value = -1.0 if ch_idx == 1 else 1.0
+                            _apply_pan_to_slot(f, mslot, mclip, pan_value, audio_frames)
+                        elif len(source_mobs) == 1:
+                            # Mono: center pan (0.0)
+                            _apply_pan_to_slot(f, mslot, mclip, 0.0, audio_frames)
+                        else:
+                            # Multi-channel (>2): no pan control
+                            mslot.segment = mclip
 
                     # Add mobs to content (MC order: Master first, then sources)
                     f.content.mobs.append(master_mob)
@@ -1178,7 +1272,19 @@ class AAFGenerator:
                         else:
                             # embedded single-channel or other cases use slot 1
                             mclip['SourceMobSlotID'].value = 1
-                        mslot.segment = mclip
+                        
+                        # Apply pan based on source mob count
+                        if len(channel_mobs) == 2:
+                            # Stereo: channel 1 = left (-1.0), channel 2 = right (1.0)
+                            pan_value = -1.0 if ch_idx == 0 else 1.0
+                            _apply_pan_to_slot(f, mslot, mclip, pan_value, master_length)
+                        elif len(channel_mobs) == 1:
+                            # Mono: center pan (0.0)
+                            _apply_pan_to_slot(f, mslot, mclip, 0.0, master_length)
+                        else:
+                            # Multi-channel (>2): no pan control
+                            mslot.segment = mclip
+                        
                         mslot.name = wav_metadata.get('filename', 'Unknown')
                 
                 # === 4. Add metadata to MasterMob ===
@@ -1488,7 +1594,19 @@ class AAFGenerator:
                         mclip['StartTime'].value = 0
                         mclip['SourceID'].value = wave_mob.mob_id
                         mclip['SourceMobSlotID'].value = ch_idx + 1
-                        mslot.segment = mclip
+                        
+                        # Apply pan based on channel count (WAVE descriptor mode)
+                        if channels == 2:
+                            # Stereo: channel 0 = left (-1.0), channel 1 = right (1.0)
+                            pan_value = -1.0 if ch_idx == 0 else 1.0
+                            _apply_pan_to_slot(f, mslot, mclip, pan_value, clip_length)
+                        elif channels == 1:
+                            # Mono: center pan (0.0)
+                            _apply_pan_to_slot(f, mslot, mclip, 0.0, clip_length)
+                        else:
+                            # Multi-channel (>2): no pan control
+                            mslot.segment = mclip
+                        
                         mslot.name = wav_metadata.get('filename', 'Unknown')
 
                     # 4) Metadata on MasterMob

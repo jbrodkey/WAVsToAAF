@@ -47,8 +47,7 @@ def dummy_nonwav() -> Path:
 import sys
 import os
 
-# Ensure the local aaf2 implementation in 'aaf python stuff' (repo path) is importable
+# Ensure project root (containing wav_to_aaf.py) is importable when running pytest
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-LOCAL_AAF2 = os.path.join(ROOT, 'aaf python stuff')
-if os.path.isdir(LOCAL_AAF2) and LOCAL_AAF2 not in sys.path:
-    sys.path.insert(0, LOCAL_AAF2)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)

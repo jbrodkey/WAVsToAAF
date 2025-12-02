@@ -1,0 +1,11 @@
+{
+  "track_name": "Avid Title",
+  "talent": "Avid Artist",
+  "composer": "Avid Composer",
+  "album": "Album",
+  "source": "Label",
+  "track": "TrackNumber",
+  "catalog_number": "CatalogNumber",
+  "description": "Description",
+  "duration": "DurationSamples"
+}

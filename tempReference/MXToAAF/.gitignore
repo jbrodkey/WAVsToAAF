@@ -1,0 +1,32 @@
+# OS-specific junk
+.DS_Store
+
+# Byte-compiled / cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test cache
+.pytest_cache/
+
+# Build / packaging outputs
+build/
+dist/
+*.egg-info/
+
+# Editor/IDE configs (keep local only)
+.vscode/
+
+# Generated artifacts and sample media (exclude from repo)
+artifacts/
+Sample Media/
+
+# External sibling projects (exclude from this package repo)
+WAVsToAAF/
+WAVsToALE/
+
+# Temporary files
+*.tmp
+*.log

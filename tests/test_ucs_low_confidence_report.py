@@ -1,12 +1,20 @@
 import tempfile
 from pathlib import Path
 from wav_to_aaf import WAVsToAAFProcessor
+import shutil
+import wave
+import struct
 
 
-def test_low_confidence_report_written(tmp_path):
-    src_dir = Path('spec_test_aafs')
+def test_low_confidence_report_written(tmp_path, tiny_wav_mono: Path):
+    src_dir = tmp_path / 'src'
     out_dir = tmp_path / 'out'
+    src_dir.mkdir()
     out_dir.mkdir()
+
+    # Place a tiny wav into the source directory
+    wav_path = src_dir / 'fx_door_close.wav'
+    shutil.copyfile(str(tiny_wav_mono), str(wav_path))
 
     proc = WAVsToAAFProcessor()
     # lower the min score to 999 so all scored matches are considered low confidence
