@@ -40,12 +40,12 @@ python3 wav_to_aaf_gui.py
 1) Choose a WAV file or a folder
 2) Choose an Output Folder
 3) Set FPS (defaults to 24)
-4) Optional: check “Embed audio in AAF” (unchecked = linked)
+4) “Embed audio in AAF (default)” is ON by default; uncheck to create linked AAFs
 5) Run
 
 The log will show progress and where AAFs were saved. “Open AAF Location” reveals the result.
 
-### Build the macOS app (optional)
+### Packaging & Run (macOS)
 
 From the WAVsToAAF folder on macOS:
 
@@ -54,6 +54,22 @@ From the WAVsToAAF folder on macOS:
 ```
 
 This creates `dist/WAVsToAAF.app`. The build bundles the `data/` folder so UCS CSVs are available at runtime. If an icon file exists at `icons/mac/WAVsToAAF.icns`, it will be applied automatically.
+
+Launch the app:
+
+```bash
+open dist/WAVsToAAF.app
+```
+
+Run from source (GUI or CLI):
+
+```bash
+# GUI
+python3 wav_to_aaf_gui.py
+
+# CLI interactive (prompts for paths)
+python3 wav_to_aaf.py
+```
 
 ### CLI
 
@@ -195,7 +211,7 @@ python3 -m pip install -r requirements.txt
 pytest -q
 ```
 
-- A GitHub Actions workflow is included at `.github/workflows/python-tests.yml` which runs the test suite on push and pull requests to `main`. The workflow config ensures the tests are run with the project-local `aaf2` helper in `aaf python stuff` so CI uses the repository's local aaf2 implementation.
+- Tests are self-contained and generate tiny WAVs at runtime; no external media is required. The project uses `pyaaf2` from PyPI for AAF support.
 ├── docs/                      # Extra documentation and user-facing assets
 │   └── README.rtf             # RTF version styled to match WAVsToALE
 │
