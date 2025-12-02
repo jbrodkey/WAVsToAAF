@@ -1,290 +1,240 @@
 # WAVsToAAF
 
-Convert WAV files to Advanced Authoring Format (AAF) files with embedded metadata.
+Convert WAV files to Advanced Authoring Format (AAF) with rich metadata for fast organizing, relinking, and batch import in Avid Media Composer and other AAF-compatible tools.
+
+Version: v1.0.0
 
 ## Overview
 
-WAVsToAAF is a Python utility that scans directories for WAV files, extracts comprehensive audio metadata including BEXT (Broadcast Extension) chunk data, LIST-INFO metadata, embedded XML chunks, and UCS categorization, then generates actual AAF files suitable for professional media workflows.
+WAVsToAAF scans your WAVs, extracts production metadata (BEXT, RIFF LIST-INFO, embedded XML), auto-tags with UCS categories, and builds real AAFs. Use linked media for lightweight bins and easy relink, or embed audio for self-contained handoffs—your choice per run.
 
-## Features
+## Highlights
 
-- **Batch Processing**: Process entire directories of WAV files
-- **Single File Mode**: Process individual files
-- **Real AAF Files**: Creates actual .aaf files (not XML) using pyaaf2
-- **BEXT Support**: Extracts broadcast metadata from BEXT chunks
-- **LIST-INFO Support**: Extracts RIFF INFO metadata (IART, ICMT, ICOP, INAM, etc.)
-- **XML Chunk Support**: Extracts embedded XML metadata (EBU Core, BWF MetaEdit, Pro Tools, etc.)
-- **UCS Integration**: Universal Category System sound categorization
-- **Audio Metadata**: Captures sample rate, channels, duration, file size
-- **Linked Media**: Creates AAF files that reference original WAV files
-- **Professional Workflow**: Compatible with Avid Media Composer, Pro Tools, and other AAF-compatible software
-- **Cross-Platform**: Works on Windows, macOS, and Linux
+- Real AAFs via pyaaf2 (no XML intermediates)
+- GUI and CLI workflows
+- Linked vs Embedded AAFs (toggle)
+- Relink-friendly with NetworkLocator file URLs
+- 9 frame rates with normalization (23.98 → 23.976)
+- BEXT, LIST-INFO, XML ingestion; UCS auto-categorization
+- Single-file or batch folders
 
-## Supported Metadata
+## Requirements
 
-### Basic WAV Properties
-- Sample rate, channels, bit depth
-- File size and duration
-- Creation and modification times
+- Python 3.8+ (macOS, Windows, Linux)
+- pip to install dependencies
 
-### BEXT Chunk (Broadcast Extension)
-- Description, Originator, Originator Reference
-- Origination Date/Time, Time Reference
-- UMID (Unique Material Identifier)
-- Loudness metadata (LUFS, True Peak, etc.)
-
-### LIST-INFO Chunks (RIFF INFO)
-- **IART**: Artist
-- **ICMT**: Comment
-- **ICOP**: Copyright
-- **ICRD**: Creation Date
-- **IENG**: Engineer
-- **IGNR**: Genre
-- **IKEY**: Keywords
-- **IMED**: Medium
-- **INAM**: Title/Name
-- **IPRD**: Product/Album
-- **ISBJ**: Subject
-- **ISFT**: Software
-- **ISRC**: Source
-- **ISRF**: Source Form
-- **ITCH**: Technician
-
-### XML Chunks (Embedded XML Metadata)
-- **EBU Core XML**: `<ebucore:ebuCoreMain>` - European Broadcasting Union metadata standard
-- **BWF MetaEdit XML**: `<BWFMetaEdit>` - BWF metadata editor format
-- **Pro Tools XML**: `<ProTools>` - Avid Pro Tools session metadata
-- **AXML Chunks**: `<axml>` - BWF AXML chunk format
-- **Generic XML**: Any `<?xml>` content found in WAV files
-
-### UCS Categorization
-- Primary category matching with confidence scores
-- Alternative category suggestions
-- 753 predefined sound categories
-
-## Installation
-
-### Requirements
-- Python 3.7 or higher
-- Standard library only (no external dependencies required)
-## Installation
-
-### Prerequisites
-- Python 3.7 or higher
-- pip (Python package installer)
-
-### Dependencies
-Install required Python packages:
+Install dependency:
 
 ```bash
 pip install pyaaf2
 ```
 
-### Setup
-```bash
-# Clone or download the script
-cd pythonScripts/WAVsToAAF
+## Quick Start
 
-# Make executable (Unix/macOS)
-chmod +x wav_to_aaf.py
-```
-
-## Usage
-
-### Interactive Mode (Recommended)
-
-Simply run the script without arguments for a user-friendly interactive experience:
+### GUI
 
 ```bash
-python wav_to_aaf.py
+python3 wav_to_aaf_gui.py
 ```
 
-The script will prompt you for:
-- **Input path**: WAV directory or single WAV file
-- **Output path**: AAF output directory or file (with smart defaults)
+1) Choose a WAV file or a folder
+2) Choose an Output Folder
+3) Set FPS (defaults to 24)
+4) Optional: check “Embed audio in AAF” (unchecked = linked)
+5) Run
 
-### Command Line Interface
+The log will show progress and where AAFs were saved. “Open AAF Location” reveals the result.
 
-#### Process Directory (Default)
+### Build the macOS app (optional)
+
+From the WAVsToAAF folder on macOS:
+
 ```bash
-# Process current directory, output to ./aaf_output
-python wav_to_aaf.py
-
-# Process specific input directory
-python wav_to_aaf.py ./audio_files
-
-# Process input directory, specify output directory
-python wav_to_aaf.py ./audio_files ./my_aaf_output
+./packaging/build.sh
 ```
 
-#### Process Single File
+This creates `dist/WAVsToAAF.app`. The build bundles the `data/` folder so UCS CSVs are available at runtime. If an icon file exists at `icons/mac/WAVsToAAF.icns`, it will be applied automatically.
+
+### CLI
+
+Interactive (prompts for paths):
+
 ```bash
-# Process single WAV file
-python wav_to_aaf.py -f input.wav output.aaf
+python3 wav_to_aaf.py
 ```
 
-#### Help and Version
+Batch a folder → folder:
+
 ```bash
-# Show help
-python wav_to_aaf.py --help
-
-# Show version
-python wav_to_aaf.py --version
+python3 wav_to_aaf.py ./audio_files ./aaf_output
 ```
 
-### Python API
+Single file → AAF:
 
-```python
-from wav_to_aaf import WAVsToAAFProcessor
-
-# Create processor
-processor = WAVsToAAFProcessor()
-
-# Process directory
-result = processor.process_directory('./audio_files', './aaf_output')
-
-# Process single file
-result = processor.process_single_file('input.wav', 'output.aaf')
+```bash
+python3 wav_to_aaf.py -f input.wav output.aaf
 ```
 
-## Output Format
+Common flags:
 
-The generated AAF files contain:
+```bash
+# Help / version
+python3 wav_to_aaf.py --help
+python3 wav_to_aaf.py --version
 
-### AAF Structure
-- Master Mob with embedded metadata
-- Source Mob with WAVE descriptor
-- File references to original WAV files
-- Timeline slots with proper audio mapping
+# Frame rate (timecode calculations)
+python3 wav_to_aaf.py ./audio_files ./aaf_output --fps 23.976
 
-### Audio Properties
-- Sample rate, channels, bit depth
-- Duration in frames and timecode
-- File size and timestamps
+# Embed audio into AAF (default). Use --linked to create linked AAFs when preferred.
+python3 wav_to_aaf.py -f input.wav output.aaf --embed
 
-### BEXT Metadata (if present)
-- Description and originator information embedded in comments
-- Origination date and time
-- Time reference and UMID
-- Loudness metadata (EBU R128)
+# UCS matching
+python3 wav_to_aaf.py ./audio_files ./aaf_output --ucs-exact  # disable fuzzy UCS guessing; only exact ID prefixes accepted
 
-### UCS Categorization
-- Automatic sound categorization using Universal Category System
-- Category matching based on filename and BEXT description
-- Primary category information embedded in mob name/comments
-- Match confidence scoring
-
-### AAF File Benefits
-- **Professional Compatibility**: Works with Avid Media Composer, Pro Tools, and other AAF-compatible software
-- **Linked Media**: References original WAV files rather than copying/converting audio data
-- **Metadata Preservation**: BEXT, INFO, and UCS data embedded in AAF structure
-- **Timeline Ready**: Can be imported directly into editing timelines
-- **Lossless**: No audio quality degradation as files are linked, not converted
-
-## Universal Category System (UCS) Integration
-
-WAVsToAAF automatically categorizes sounds using the Universal Category System v8.2.1:
-
-- **Automatic Detection**: Analyzes filenames and BEXT descriptions
-- **753 Categories**: Complete UCS category database included
-- **Smart Matching**: Keyword and pattern-based categorization
-- **Primary Category**: Best match embedded in AAF metadata
-- **Confidence Scoring**: Match quality assessment
-
-### Category Matching Process:
-1. **Filename Analysis**: Extracts keywords from WAV filename
-2. **BEXT Integration**: Uses BEXT description if available  
-3. **Keyword Matching**: Compares against UCS synonyms and keywords
-4. **Scoring Algorithm**: Calculates match confidence
-5. **Result Selection**: Returns best match for embedding in AAF
-
-## BEXT Chunk Support
-
-WAVsToAAF automatically detects and extracts BEXT (Broadcast Extension) chunks according to EBU R68-2000 standard:
-
-- **Description**: Textual description of the sound
-- **Originator**: Name of the originator/organization
-- **Originator Reference**: Unique reference for the originator
-- **Origination Date/Time**: When the material was first created
-- **Time Reference**: Sample count since midnight
-- **UMID**: Unique Material Identifier
-- **Loudness Metadata**: EBU R128 loudness values (if present)
-          <MatchScore>8.5</MatchScore>
-        </PrimaryCategory>
-      </UCSMetadata>
-      <TimelineMobSlot SlotID="1">
-        <AudioProperties>
-          <SampleRate>48000</SampleRate>
-          <Channels>2</Channels>
-          <Duration>00:02:30:00</Duration>
-        </AudioProperties>
-      </TimelineMobSlot>
-    </MasterMob>
-  </ContentStorage>
-</AAF>
+# Skip log (enabled by default; only written if files were skipped)
+python3 wav_to_aaf.py ./audio_files ./aaf_output --skip-log /path/to/SkipLog.txt
 ```
 
-## UCS (Universal Category System) Support
+Supported FPS values: 23.98, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60
 
-## Error Handling
+Notes:
+- 23.98 is normalized internally to 23.976
+- Timecode fields include a StartTC_{fps}fps comment (e.g., StartTC_29_97fps)
+- Skip logs help you review files that weren’t processed and the reason (only created when there are skips)
 
-- Gracefully handles corrupted or unsupported files
-- Continues processing even if individual files fail
-- Provides detailed error messages and progress feedback
-- Validates input/output directories
+## Linked vs Embedded AAFs
 
-## Limitations
+- Embedded (default):
+  - Self-contained AAFs; portable and archive-friendly
+  - Larger files; no external relink required
 
-- Creates AAF files with media links (not embedded audio)
-- Requires original WAV files to remain accessible for playback
-- Comments/metadata support depends on AAF version capabilities
+- Linked (opt-in via `--linked`):
+  - Small AAFs that reference the original WAVs
+  - Best for editorial prep, bins, and when you have centralized media storage
+  - Relink works via NetworkLocator file URLs
+
+Both modes batch import cleanly in Media Composer. Linked AAFs also relink to original WAVs when media is online.
+
+## What gets written
+
+### AAF structure
+- MasterMob with comments for key fields
+- SourceMob with WAVE Descriptor
+- Timeline slots sized to audio length
+- For linked workflows: NetworkLocator to the WAV file URL
+
+### Technicals
+- SampleRate, BitDepth, Channels, Number of Frames, Duration
+- Start/End timecode fields at selected FPS
+- Tracks label (A1, A1A2, A1A{n})
+
+### BEXT (if present)
+- Description, Originator, OriginatorReference
+- Origination Date/Time, Time Reference, UMID
+- Loudness values when available
+
+### LIST-INFO (if present)
+- IART, ICMT, ICOP, ICRD, IENG, IGNR, IKEY, INAM, IPRD, ISBJ, ISFT, ISRC …
+
+### XML (if present)
+- Keys from EBU Core, BWF MetaEdit, Pro Tools, or generic XML are surfaced with a type prefix (ebucore_, bwfmetaedit_, protools_, axml_, xml_)
+
+### UCS categorization
+- Primary category (Category, SubCategory, ID, Full Name)
+- Match score
+
+## Examples
+
+Create linked AAFs for a folder at 29.97 fps:
+
+```bash
+python3 wav_to_aaf.py ./FX ./AAF --fps 29.97
+```
+
+Create an embedded AAF for a single file at 23.976:
+
+```bash
+python3 wav_to_aaf.py -f "Some File.wav" "Some File.aaf" --fps 23.976 --embed
+```
+
+## Tips
+
+- If your filesystem paths include spaces, quote them as shown above
+- On macOS, you can reveal the output from the GUI using “Open AAF Location”
+- Linked AAFs are ideal for bins and later relinking to original WAVs
 
 ## Compatibility
 
-- **Python**: 3.7+
-- **Platforms**: Windows, macOS, Linux
-- **WAV Formats**: Standard PCM WAV files
-- **Dependencies**: pyaaf2
-- **AAF Software**: Avid Media Composer, Pro Tools, DaVinci Resolve, and other AAF-compatible applications
+- Python: 3.8+
+- Platforms: macOS, Windows, Linux
+- WAV: PCM WAV (.wav, .wave)
+
+Note: This tool intentionally supports only PCM WAV files. Other audio file formats (AIFF, MP3, FLAC, etc.) are not supported. If you need additional formats, convert to WAV externally before running this tool.
+- NLEs/DAWs: Avid Media Composer, Pro Tools, and other AAF-capable apps
+
+## Project layout
+
+```
+WAVsToAAF/
+├── README.md                  # Main documentation (this file)
+├── wav_to_aaf.py              # CLI entry point (convert WAVs → AAF)
+├── wav_to_aaf_gui.py          # GUI entry point (Tkinter app)
+├── requirements.txt           # Python deps for development/CLI
+├── .gitignore                 # Ignore build artifacts, caches, DMG staging, etc.
+│
+├── data/                      # Runtime data files packaged alongside the app
+│   └── UCS_v8.2.1_Full_List.csv  # UCS categories (preferred location)
+│
+
+## Tests & Continuous Integration
+
+- Unit tests use pytest. Install dev deps and run tests locally with:
+
+```bash
+python3 -m pip install -r requirements.txt
+pytest -q
+```
+
+- A GitHub Actions workflow is included at `.github/workflows/python-tests.yml` which runs the test suite on push and pull requests to `main`. The workflow config ensures the tests are run with the project-local `aaf2` helper in `aaf python stuff` so CI uses the repository's local aaf2 implementation.
+├── docs/                      # Extra documentation and user-facing assets
+│   └── README.rtf             # RTF version styled to match WAVsToALE
+│
+├── icons/                     # App icons and artwork (mac/win, DMG backgrounds)
+│   ├── WAVsToAAF_1024.png
+│   ├── mac/
+│   └── win/
+│
+├── dev/                       # Developer utilities (not required at runtime)
+│   └── inspect_aaf_metadata.py
+│
+└── archive/                   # Legacy experiments/tests kept for reference
+  └── (older prototypes, test scripts)
+```
+
+Notes:
+- The app looks for UCS CSVs in data/ (bundled in builds via add-data). Keep future UCS updates here.
+- docs/ holds the RTF README so the project root stays clean.
+- dev/ and archive/ are optional for daily use; safe to omit from distributions.
 
 ## Version History
 
-### 2.0.0 (2025-11-03)
-- **Major Update**: Now creates actual AAF files instead of XML
-- Added pyaaf2 dependency for real AAF file generation
-- Improved metadata embedding in AAF structure
-- Enhanced compatibility with professional audio/video software
-- Interactive mode improvements
-
-### 1.3.0 (2025-11-03)
-- Added interactive mode for user-friendly input prompting
-- Added XML chunk support (EBU Core, BWF MetaEdit, Pro Tools)
-- Path sanitization and smart defaults
-
-### 1.2.0 (2025-11-03) 
-- Added XML chunk extraction and parsing
-- Enhanced metadata extraction capabilities
-
-### 1.1.0 (2025-11-03)
-- Added LIST-INFO chunk support
-- Expanded metadata extraction
-
-### 1.0.0 (2025-11-03)
-- Initial release
-- Basic WAV to AAF XML conversion
-- BEXT chunk extraction
-- Batch and single file processing
-- Command line interface
+### v1.0.0 (2025‑11‑04)
+- First public release
+- GUI and CLI
+- Linked vs Embedded AAF option
+- 9 FPS options with 23.98 → 23.976 normalization
+- BEXT, LIST‑INFO, XML ingest; UCS auto‑categorization
+- Single‑file and batch directory processing
 
 ## License
 
 Copyright (c) 2025 Jason Brodkey. All rights reserved.
 
-## Related Projects
+## Related
 
-- **WAVsToALE**: Convert WAV files to Avid Log Exchange format
-- **pyaaf2**: Python library for reading and writing AAF files
+- WAVsToALE – ALE generator companion utility
+- pyaaf2 – Python AAF library used by this tool
 
 ## Support
 
-For issues, feature requests, or questions, please create an issue in the project repository.
+Questions or feature requests? Reach out via your usual channel.

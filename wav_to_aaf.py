@@ -41,6 +41,7 @@ import argparse
 import csv
 import re
 import io
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -49,6 +50,61 @@ import aaf2
 
 __version__ = "2.0.0"
 __author__ = "Jason Brodkey"
+
+
+def create_deterministic_umid(wav_path: Path, mob_type: str = "master", tape_mode: bool = False) -> aaf2.mobid.MobID:
+    """
+    Create a deterministic UMID based on file path, size, and modification time.
+    
+    Args:
+        wav_path: Path to the WAV file
+        mob_type: Type of mob ("master", "import", "wave", "tape") for differentiation
+        tape_mode: If True, use Avid-style UMID prefix (01010f10) like ALE-exported AAFs
+    
+    Returns:
+        Deterministic MobID that will be the same across runs for the same file
+    """
+    try:
+        # Create a stable seed from file properties
+        abs_path = str(wav_path.resolve())
+        file_size = wav_path.stat().st_size if wav_path.exists() else 0
+        mod_time = int(wav_path.stat().st_mtime) if wav_path.exists() else 0
+        
+        # Create base hash from file properties
+        base_data = f"{abs_path}|{file_size}|{mod_time}".encode('utf-8')
+        base_hash = hashlib.sha256(base_data).hexdigest()
+        
+        # Add mob type differentiation
+        mob_data = f"{base_hash}|{mob_type}".encode('utf-8')
+        mob_hash = hashlib.sha256(mob_data).digest()
+        
+        # Create SMPTE UMID URN string from hash
+        # Choose UMID prefix based on mode
+        if tape_mode:
+            # Avid-style prefix from ALE-exported AAFs: 01010f10
+            prefix = "060a2b34.01010105.01010f10.13000000"
+        else:
+            # Standard prefix: 01010f20  
+            prefix = "060a2b34.01010105.01010f20.13000000"
+        
+        # Use first 16 bytes of hash to create the instance part (4 groups of 8 hex chars)
+        instance_bytes = mob_hash[:16]
+        instance_parts = []
+        for i in range(0, 16, 4):
+            hex_part = instance_bytes[i:i+4].hex()
+            instance_parts.append(hex_part)
+        
+        instance_str = ".".join(instance_parts)
+        urn = f"urn:smpte:umid:{prefix}.{instance_str}"
+        
+        # Create MobID from URN string
+        return aaf2.mobid.MobID(urn)
+        
+    except Exception as e:
+        print(f"Warning: Could not create deterministic UMID for {wav_path}: {e}")
+        # Fall back to random UMID if deterministic generation fails
+        return aaf2.mobid.MobID()
+
 
 class WAVMetadataExtractor:
     """Extract metadata from WAV files including BEXT chunk data"""
@@ -461,6 +517,9 @@ class UCSProcessor:
         """Load UCS data from CSV file"""
         script_dir = Path(__file__).parent
         ucs_files = [
+            script_dir / "data" / "UCS_v8.2.1_Full_List.csv",
+            script_dir / "data" / "UCS_v8.2.0_Full_List.csv",
+            script_dir / "data" / "UCS_Full_List.csv",
             script_dir / "UCS_v8.2.1_Full_List.csv",
             script_dir / "UCS_v8.2.0_Full_List.csv",
             script_dir / "UCS_Full_List.csv"
@@ -498,11 +557,34 @@ class UCSProcessor:
         if not self.ucs_loaded:
             print("Warning: No UCS file found. UCS categorization will be disabled.")
     
-    def categorize_sound(self, filename: str, description: str = "") -> Dict:
+    def categorize_sound(self, filename: str, description: str = "", allow_guess: bool = True) -> Dict:
         """Categorize sound based on filename and description"""
         if not self.ucs_loaded:
             return {}
         
+        # First, check if filename starts with an exact UCS ID (common naming convention)
+        # e.g., "AMBMisc_Hotel_Elevator_Ride.wav" starts with "AMBMisc"
+        filename_no_ext = re.sub(r'\.(wav|wave)$', '', filename, flags=re.IGNORECASE)
+        for ucs_id in self.ucs_data.keys():
+            if filename_no_ext.startswith(ucs_id):
+                # Exact UCS ID match found at the beginning of filename
+                ucs_info = self.ucs_data[ucs_id]
+                return {
+                    'primary_category': {
+                        'id': ucs_id,
+                        'full_name': ucs_info['full_name'],
+                        'category': ucs_info['category'],
+                        'subcategory': ucs_info['subcategory'],
+                        'score': 100.0  # Perfect match
+                    }
+                }
+        
+        # No exact ID match
+        if not allow_guess:
+            # If guessing is disabled, return empty result when exact ID isn't present
+            return {}
+
+        # proceed with text analysis
         # Combine filename and description for analysis
         text_to_analyze = f"{filename} {description}".lower()
         
@@ -610,10 +692,32 @@ class AAFGenerator:
         self.app_name = f"WAVsToAAF v{__version__}"
     
     def create_aaf_file(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict = None, 
-                       xml_metadata: Dict = None, ucs_metadata: Dict = None, output_path: str = None) -> str:
-        """Create AAF file from WAV, BEXT, INFO, XML, and UCS metadata"""
+                       xml_metadata: Dict = None, ucs_metadata: Dict = None, output_path: str = None,
+                       fps: float = 24, embed_audio: bool = False, link_mode: str = 'import', 
+                       relative_locators: bool = False) -> str:
+        """Create AAF file from WAV, BEXT, INFO, XML, and UCS metadata using Avid-compatible structure"""
         
         try:
+            # Get audio parameters - ensure they're integers
+            try:
+                channels = int(wav_metadata.get('channels', 1))
+                sample_rate = int(wav_metadata.get('sample_rate', 48000))
+                audio_frames = int(wav_metadata.get('frames', 0))
+                sample_width = int(wav_metadata.get('sample_width', 2))
+                bit_depth = int(sample_width * 8)
+            except (ValueError, TypeError) as e:
+                raise Exception(f"Invalid audio parameters: channels={wav_metadata.get('channels')}, "
+                              f"sample_rate={wav_metadata.get('sample_rate')}, "
+                              f"frames={wav_metadata.get('frames')}, "
+                              f"sample_width={wav_metadata.get('sample_width')}: {e}")
+            
+            # Convert fps to int for AAF library (it does not accept floats)
+            fps = int(fps)
+
+            # Calculate video length at specified fps
+            duration_seconds = audio_frames / sample_rate if sample_rate else 0
+            video_length = int(duration_seconds * fps)
+            
             with aaf2.open(output_path, 'w') as f:
                 # Set file identification
                 f.header['ObjectModelVersion'].value = 1
@@ -626,165 +730,984 @@ class AAFGenerator:
                     ident['ProductVersionString'].value = __version__
                     break
                 
-                # Create master mob for the audio file
-                master_mob = f.create.MasterMob()
-                master_mob.name = wav_metadata.get('filename', 'Unknown')
-                
-                # Set creation/modification times if available
-                if 'creation_time' in wav_metadata:
-                    try:
-                        creation_time = datetime.fromisoformat(wav_metadata['creation_time'])
-                        master_mob['CreationTime'].value = creation_time
-                        master_mob['LastModified'].value = creation_time
-                    except:
+                # Choose linked structure
+                # 'pcm' -> MC-exact file essence via PCMDescriptor (earlier variant that may avoid 1-by-1 prompts)
+                # 'import' -> ImportDescriptor 3-tier structure (current default)
+                use_mc_exact_linked = (str(link_mode).lower() == 'pcm')
+
+                # Resolve path to WAV
+                import_mob = f.create.SourceMob()
+                from pathlib import Path
+                wav_path = Path(wav_metadata.get('filepath', ''))
+                if use_mc_exact_linked and wav_path.exists():
+                    # Build one SourceMob per channel, with PCMDescriptor and file locators
+                    source_mobs = []
+                    abs_path = str(wav_path)
+                    
+                    # Only create URIs if not using relative locators
+                    if not relative_locators:
+                        file_uri = wav_path.as_uri()
+                        file_url_localhost = f"file://localhost{wav_path.as_posix()}"
+
+                    for ch_idx in range(channels):
+                        source_mob = f.create.SourceMob()
+                        source_mob.name = None  # MC leaves SourceMob names as None
+
+                        pcm = f.create.PCMDescriptor()
+                        pcm['SampleRate'].value = sample_rate
+                        pcm['Length'].value = audio_frames
+                        pcm['AudioSamplingRate'].value = sample_rate
+                        pcm['Channels'].value = 1
+                        pcm['QuantizationBits'].value = bit_depth
+                        pcm['BlockAlign'].value = sample_width
+                        pcm['AverageBPS'].value = sample_rate * sample_width
+                        pcm['ContainerFormat'].value = f.dictionary.lookup_containerdef('AAF')
+                        try:
+                            codec = f.dictionary.lookup_codecdef('PCM')
+                            pcm['CodecDefinition'].value = codec
+                        except Exception:
+                            pass
+
+                        # Add locators - use relative if requested
+                        if relative_locators:
+                            relative_path = f"./{wav_path.name}"
+                            loc = f.create.NetworkLocator(); loc['URLString'].value = relative_path; pcm['Locator'].append(loc)
+                        else:
+                            loc1 = f.create.NetworkLocator(); loc1['URLString'].value = file_uri; pcm['Locator'].append(loc1)
+                            loc2 = f.create.NetworkLocator(); loc2['URLString'].value = file_url_localhost; pcm['Locator'].append(loc2)
+                            loc3 = f.create.NetworkLocator(); loc3['URLString'].value = abs_path; pcm['Locator'].append(loc3)
+                            loc4 = f.create.NetworkLocator(); loc4['URLString'].value = wav_path.name; pcm['Locator'].append(loc4)
+
+                        source_mob.descriptor = pcm
+
+                        # Create source slot at audio sample rate
+                        src_slot = source_mob.create_timeline_slot(sample_rate)
+                        src_slot.name = "Audio Slot"
+                        src_slot.edit_rate = sample_rate
+
+                        # Segment points directly to file essence: no SourceID/SourceMobSlotID
+                        sclip = f.create.SourceClip()
+                        sclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        sclip['Length'].value = audio_frames
+                        sclip['StartTime'].value = 0
+                        src_slot.segment = sclip
+
+                        source_mobs.append((source_mob, src_slot))
+
+                    # Create MasterMob and wire channels
+                    master_mob = f.create.MasterMob(str(wav_path.stem))
+                    for source_mob, src_slot in source_mobs:
+                        mslot = master_mob.create_timeline_slot(sample_rate)
+                        mslot.name = wav_metadata.get('filename', 'Unknown')
+                        mslot.edit_rate = sample_rate
+                        mclip = f.create.SourceClip()
+                        mclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        mclip['Length'].value = audio_frames
+                        mclip['StartTime'].value = 0
+                        mclip['SourceID'].value = source_mob.mob_id
+                        mclip['SourceMobSlotID'].value = src_slot.slot_id
+                        mslot.segment = mclip
+
+                    # Add mobs to content (MC order: Master first, then sources)
+                    f.content.mobs.append(master_mob)
+                    for source_mob, _ in source_mobs:
+                        f.content.mobs.append(source_mob)
+
+                    # === Add metadata to MasterMob (same as below)
+                    # BEXT metadata (prefixed)
+                    if bext_metadata:
+                        if bext_metadata.get('description'):
+                            master_mob.comments['BEXT_Description'] = bext_metadata['description']
+                        if bext_metadata.get('originator'):
+                            master_mob.comments['BEXT_Originator'] = bext_metadata['originator']
+                        if bext_metadata.get('originator_reference'):
+                            master_mob.comments['BEXT_Originator_Reference'] = bext_metadata['originator_reference']
+                        if bext_metadata.get('origination_date'):
+                            master_mob.comments['BEXT_Origination_Date'] = bext_metadata['origination_date']
+                        if bext_metadata.get('origination_time'):
+                            master_mob.comments['BEXT_Origination_Time'] = bext_metadata['origination_time']
+                        if bext_metadata.get('time_reference'):
+                            master_mob.comments['BEXT_Time_Reference'] = str(bext_metadata['time_reference'])
+                        if bext_metadata.get('umid'):
+                            master_mob.comments['BEXT_UMID'] = bext_metadata['umid']
+
+                    # INFO metadata (prefixed)
+                    if info_metadata:
+                        info_mappings = {
+                            'IART': 'INFO_Artist','ICMT': 'INFO_Comment','ICOP': 'INFO_Copyright','ICRD': 'INFO_Creation_Date',
+                            'IENG': 'INFO_Engineer','IGNR': 'INFO_Genre','IKEY': 'INFO_Keywords','INAM': 'INFO_Title',
+                            'IPRD': 'INFO_Product','ISBJ': 'INFO_Subject','ISFT': 'INFO_Software','ISRC': 'INFO_Source'
+                        }
+                        for chunk_id, value in info_metadata.items():
+                            if value:
+                                master_mob.comments[info_mappings.get(chunk_id, f'INFO_{chunk_id}')] = str(value)
+
+                    # UCS (prefixed) + clean names
+                    if ucs_metadata and 'primary_category' in ucs_metadata:
+                        category = ucs_metadata['primary_category']
+                        master_mob.comments['UCS_Category'] = category['category']
+                        master_mob.comments['UCS_SubCategory'] = category['subcategory']
+                        master_mob.comments['UCS_ID'] = category['id']
+                        master_mob.comments['UCS_Full_Name'] = category['full_name']
+                        master_mob.comments['UCS_Match_Score'] = str(category['score'])
+                        master_mob.comments['Category'] = category.get('category','')
+                        master_mob.comments['SubCategory'] = category.get('subcategory','')
+                        master_mob.comments['UCS ID'] = category.get('id','')
+
+                    # Clean Avid fields
+                    if bext_metadata and bext_metadata.get('description'):
+                        master_mob.comments['Description'] = bext_metadata['description']
+                    elif info_metadata and 'INAM' in info_metadata:
+                        master_mob.comments['Description'] = str(info_metadata.get('INAM'))
+                    master_mob.comments['Name'] = str(wav_path.stem)
+                    master_mob.comments['Filename'] = str(wav_path.name)
+                    master_mob.comments['FilePath'] = str(wav_path)
+                    master_mob.comments['SampleRate'] = str(sample_rate)
+                    master_mob.comments['BitDepth'] = str(bit_depth)
+                    master_mob.comments['Channels'] = str(channels)
+                    master_mob.comments['Number of Frames'] = str(audio_frames)
+                    master_mob.comments['AudioFormat'] = 'WAV'
+                    master_mob.comments['Tracks'] = 'A1' if channels==1 else ('A1A2' if channels==2 else f"A1A{channels}")
+                    master_mob.comments['Duration'] = f"{duration_seconds:.3f}"
+                    if info_metadata and 'IKEY' in info_metadata:
+                        master_mob.comments['Keywords'] = str(info_metadata['IKEY'])
+                    if bext_metadata:
+                        if bext_metadata.get('originator'):
+                            master_mob.comments['Originator'] = bext_metadata['originator']
+                        if bext_metadata.get('originator_reference'):
+                            master_mob.comments['OriginatorReference'] = bext_metadata['originator_reference']
+                        if bext_metadata.get('origination_date'):
+                            master_mob.comments['Origination Date'] = bext_metadata['origination_date']
+                        if bext_metadata.get('origination_time'):
+                            master_mob.comments['Origination Time'] = bext_metadata['origination_time']
+                    master_mob.comments['Start'] = "00:00:00:00"
+                    master_mob.comments['End'] = "00:00:00:00"
+                    # Tape field - set to directory name for batch import consistency
+                    tape_name = Path(wav_path).parent.name if wav_path else "Unknown"
+                    master_mob.comments['Tape'] = tape_name
+                    master_mob.comments['Scene'] = ""
+                    master_mob.comments['Take'] = ""
+
+                    return output_path
+                else:
+                    # === 1. Create ImportDescriptor SourceMob ===
+                    import_mob = f.create.SourceMob()
+                    import_mob.name = wav_metadata.get('filename', 'Unknown')
+                    # Set deterministic UMID for consistent batch import behavior
+                    import_mob.mob_id = create_deterministic_umid(wav_path, "import")
+
+                    # Create ImportDescriptor and add multiple locators
+                    import_desc = f.create.ImportDescriptor()
+                    if wav_path.exists():
+                        if relative_locators:
+                            # Use relative paths according to AAF Edit Protocol spec
+                            # Base URI is determined from the AAF file location
+                            relative_path = f"./{wav_path.name}"  # "./filename.wav"
+                            locs_to_add = [relative_path]
+                            print(f"  Using relative locator: {relative_path}")
+                        else:
+                            # Provide multiple URL variants that MC can resolve with a single folder choice.
+                            # Avoid TextLocator to prevent "Error with media reference" warnings.
+                            from urllib.parse import quote
+                            abs_posix = wav_path.as_posix()
+                            # Avid-style volume-prefixed URL tends to show best in UI
+                            avid_locator_url = f"file:///Macintosh%20HD{quote(abs_posix)}"
+                            file_url_users = f"file://{quote(abs_posix)}"            # file:///Users/...
+                            file_url_localhost = f"file://localhost{quote(abs_posix)}"  # file://localhost/Users/...
+                            abs_path = abs_posix                                      # /Users/...
+                            filename_only = wav_path.name                              # bare filename
+
+                            # Order: Avid volume URL first to help MC UI prefill; then common variants
+                            locs_to_add = [avid_locator_url, file_url_users, file_url_localhost, abs_path, filename_only]
+
+                        for url in locs_to_add:
+                            try:
+                                nl = f.create.NetworkLocator(); nl['URLString'].value = url; import_desc['Locator'].append(nl)
+                            except Exception:
+                                pass
+
+                    import_mob.descriptor = import_desc
+
+                    # Add slots to ImportDescriptor - Avid expects: Ch1, Timecode, Ch2, Ch3...
+                    if channels == 1:
+                        # Mono: just add audio slot and timecode
+                        slot = import_mob.create_timeline_slot(fps)
+                        clip = f.create.SourceClip()
+                        clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        clip['Length'].value = video_length
+                        clip['StartTime'].value = 0
+                        slot.segment = clip
+                        slot.name = wav_metadata.get('filename', 'Unknown')
+
+                        # Timecode slot
+                        tc_slot = import_mob.create_timeline_slot(fps)
+                        tc = f.create.Timecode(length=video_length)
+                        tc['Start'].value = 0
+                        tc['FPS'].value = fps
+                        tc_slot.segment = tc
+                    else:
+                        # Stereo/Multi: Ch1, then Timecode, then remaining channels
+                        # First channel
+                        slot1 = import_mob.create_timeline_slot(fps)
+                        clip1 = f.create.SourceClip()
+                        clip1['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        clip1['Length'].value = video_length
+                        clip1['StartTime'].value = 0
+                        slot1.segment = clip1
+                        slot1.name = wav_metadata.get('filename', 'Unknown')
+
+                        # Timecode slot (slot 2)
+                        tc_slot = import_mob.create_timeline_slot(fps)
+                        tc = f.create.Timecode(length=video_length)
+                        tc['Start'].value = 0
+                        tc['FPS'].value = fps
+                        tc_slot.segment = tc
+
+                        # Remaining channels
+                        for ch_idx in range(1, channels):
+                            slot = import_mob.create_timeline_slot(fps)
+                            clip = f.create.SourceClip()
+                            clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                            clip['Length'].value = video_length
+                            clip['StartTime'].value = 0
+                            slot.segment = clip
+                            slot.name = wav_metadata.get('filename', 'Unknown')
+
+                    # Defer appending mobs to control content order later
+
+                    # === 2. Recreate Avid export chain: WAVEDescriptor SourceMob -> ImportDescriptor SourceMob ===
+                    # Build intermediate WAVEDescriptor SourceMob with one slot per channel
+                    wave_mob = f.create.SourceMob()
+                    wave_mob.name = wav_metadata.get('filename', 'Unknown')  # Avid uses original filename
+                    # Set deterministic UMID for consistent batch import behavior
+                    wave_mob.mob_id = create_deterministic_umid(wav_path, "wave")
+
+                    # prepare channel_mobs list (may get filled by per-channel embedding)
+                    channel_mobs = []
+
+                    if embed_audio:
+                        # If user asked for per-channel embedding (default when multi-channel),
+                        # create one SourceMob per channel and import each mono channel separately.
+                        # Multi-channel WAVs will be split into per-channel mono files and each channel embedded separately.
+                        if channels > 1:
+                            # Split channels into temp mono files and import each into its own SourceMob
+                            import tempfile, os, wave as _wave
+                            tmp_paths = []
+                            try:
+                                with _wave.open(str(wav_path), 'rb') as r:
+                                    nch = r.getnchannels()
+                                    sampwidth = r.getsampwidth()
+                                    fr = r.getframerate()
+                                    nframes = r.getnframes()
+                                    raw = r.readframes(nframes)
+                                # reveal low-level values for problematic files (only in debug runs)
+
+                                # build per-channel byte streams
+                                bytes_per_frame = sampwidth * nch
+                                channels_data = [bytearray() for _ in range(nch)]
+                                for i in range(nframes):
+                                    off = i * bytes_per_frame
+                                    for c in range(nch):
+                                        start = off + c * sampwidth
+                                        channels_data[c].extend(raw[start:start+sampwidth])
+
+                                # write temp mono files and import into per-channel SourceMobs
+                                # report per-channel data lengths before writing (for debugging)
+                                for idx, chdata in enumerate(channels_data, start=1):
+                                    tmp = tempfile.NamedTemporaryFile(prefix=f"{wav_metadata.get('filename','tmp')}_ch{idx}_", suffix='.wav', delete=False)
+                                    tmp_paths.append(tmp.name)
+                                    tmp.close()
+                                    try:
+                                        with _wave.open(tmp.name,'wb') as w:
+                                            w.setnchannels(1)
+                                            w.setsampwidth(sampwidth)
+                                            w.setframerate(fr)
+                                            w.writeframes(bytes(chdata))
+                                    except Exception as write_exc:
+                                        # Failed to write temp WAV - surface the error
+                                        print(f"  Failed to write temp WAV {tmp.name}: {write_exc}")
+                                        # re-raise so the import step will fail and be reported
+                                        raise
+
+                                    # create a SourceMob and import the channel essence
+                                    phys_mob = f.create.SourceMob(f"{wav_metadata.get('filename','Unknown')}.PHYS.ch{idx}")
+                                    # Validate temp wav before passing to import_audio_essence to help diagnose EOF issues
+                                    try:
+                                        size = os.path.getsize(tmp.name)
+                                        # quick wave sanity check
+                                        try:
+                                            with _wave.open(tmp.name, 'rb') as tcheck:
+                                                params = (tcheck.getnchannels(), tcheck.getsampwidth(), tcheck.getframerate(), tcheck.getnframes())
+                                        except Exception as e:
+                                            # If the wave module can't read it, capture header and raise
+                                            with open(tmp.name, 'rb') as fh:
+                                                head = fh.read(256)
+                                            raise Exception(f"Temp WAV invalid (size={size}): wave.open failed: {e}; header={head[:64]!r}")
+
+                                        # Also try aaf2's WaveReader as an early check
+                                        try:
+                                            from aaf2 import audio as _audio
+                                            _wr = _audio.WaveReader(tmp.name)
+                                            _wr.close()
+                                        except Exception as e:
+                                            raise Exception(f"aaf2 WaveReader failed on temp WAV: {e}")
+
+                                    except Exception as diag_exc:
+                                        # Provide extra diagnostic info if import fails later
+                                        print(f"  Temp WAV diagnostics failed for {tmp.name}: {diag_exc}")
+                                    # Now import into the mob
+                                    phys_mob.import_audio_essence(tmp.name, edit_rate=sample_rate)
+                                    channel_mobs.append(phys_mob)
+
+                            finally:
+                                # cleanup temp files
+                                for p in tmp_paths:
+                                    try:
+                                        os.unlink(p)
+                                    except Exception:
+                                        pass
+                        else:
+                            # Use the library helper to import WAV essence directly into the AAF
+                            # This will create a PCMDescriptor, EssenceData and write frames into the file.
+                            try:
+                                # import_audio_essence expects a path and will write essence into the file
+                                # The returned source_slot contains descriptor and slot length info
+                                source_slot = wave_mob.import_audio_essence(str(wav_path), edit_rate=sample_rate)
+                                # descriptor and essence data have been attached to wave_mob by the helper
+                                channel_mobs.append(wave_mob)
+                            except Exception as e:
+                                # If embedding fails for any reason, surface the error so we can fall back or diagnose
+                                raise Exception(f"Embedding failed using import_audio_essence: {e}")
+                    else:
+                        wave_desc = f.create.WAVEDescriptor()
+                        wave_desc['SampleRate'].value = sample_rate
+                        wave_desc['Length'].value = audio_frames
+                        # Match Avid exported ContainerFormat (OMF rather than AAF for linked media)
+                        try:
+                            wave_desc['ContainerFormat'].value = f.dictionary.lookup_containerdef('OMF')
+                        except Exception:
+                            wave_desc['ContainerFormat'].value = f.dictionary.lookup_containerdef('AAF')
+
+                    if not embed_audio:
+                        # Minimal RIFF summary (same as before)
+                        summary = bytearray()
+                        summary.extend(b'RIFF'); summary.extend(struct.pack('<I', 0)); summary.extend(b'WAVE')
+                        summary.extend(b'fmt '); summary.extend(struct.pack('<I', 16)); summary.extend(struct.pack('<H', 1))
+                        summary.extend(struct.pack('<H', channels)); summary.extend(struct.pack('<I', int(sample_rate)))
+                        bytes_per_sec = int(sample_rate * sample_width * channels)
+                        summary.extend(struct.pack('<I', bytes_per_sec))
+                        summary.extend(struct.pack('<H', int(sample_width * channels)))
+                        summary.extend(struct.pack('<H', int(bit_depth)))
+                        summary.extend(b'data'); summary.extend(struct.pack('<I', int(audio_frames * sample_width * channels)))
+                        wave_desc['Summary'].value = bytes(summary)
+
+                        # Also add locators to WAVEDescriptor (some MC versions consult these for batch prefill)
+                        try:
+                            if wav_path.exists() and 'Locator' in wave_desc.keys():
+                                if relative_locators:
+                                    # Use relative path for WAVEDescriptor
+                                    relative_path = f"./{wav_path.name}"
+                                    nl = f.create.NetworkLocator(); nl['URLString'].value = relative_path; wave_desc['Locator'].append(nl)
+                                else:
+                                    from urllib.parse import quote
+                                    abs_posix = wav_path.as_posix()
+                                    avid_locator_url = f"file:///Macintosh%20HD{quote(abs_posix)}"
+                                    file_url_users = f"file://{quote(abs_posix)}"
+                                    file_url_localhost = f"file://localhost{quote(abs_posix)}"
+                                    abs_path = abs_posix
+                                    filename_only = wav_path.name
+                                    for url in [avid_locator_url, file_url_users, file_url_localhost, abs_path, filename_only]:
+                                        try:
+                                            nl = f.create.NetworkLocator(); nl['URLString'].value = url; wave_desc['Locator'].append(nl)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+                        wave_mob.descriptor = wave_desc
+
+                        # Create slots on WAVEDescriptor referencing ImportDescriptor channel slots
+                        # ImportDescriptor slot layout: mono has [1:audio, 2:tc], stereo has [1:ch1, 2:tc, 3:ch2, ...]
+                        for ch_idx in range(channels):
+                            wslot = wave_mob.create_timeline_slot(fps)
+                            wclip = f.create.SourceClip()
+                            wclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                            wclip['Length'].value = video_length
+                            wclip['StartTime'].value = 0
+                            wclip['SourceID'].value = import_mob.mob_id
+                            # Map to ImportDescriptor slot: ch1=slot1, ch2=slot3, ch3=slot4, etc. (skip slot 2 which is timecode)
+                            import_slot_id = 1 if ch_idx == 0 else (ch_idx + 2)
+                            wclip['SourceMobSlotID'].value = import_slot_id
+                            wslot.segment = wclip
+                        # linked case: this WAVEDescriptor represents all channels in this single SourceMob
+                        channel_mobs = [wave_mob]
+                    else:
+                        # For embedded audio we used import_audio_essence() which created the descriptor and
+                        # essence and also created a timeline slot on the SourceMob. No additional WAVEDescriptor
+                        # or channel slot setup is necessary here.
                         pass
                 
-                # Add BEXT metadata as comments/descriptions
-                if bext_metadata:
-                    comments = []
-                    if bext_metadata.get('description'):
-                        comments.append(f"Description: {bext_metadata['description']}")
-                    if bext_metadata.get('originator'):
-                        comments.append(f"Originator: {bext_metadata['originator']}")
-                    if bext_metadata.get('originator_reference'):
-                        comments.append(f"Originator Reference: {bext_metadata['originator_reference']}")
-                    if bext_metadata.get('origination_date'):
-                        comments.append(f"Origination Date: {bext_metadata['origination_date']}")
-                    if bext_metadata.get('origination_time'):
-                        comments.append(f"Origination Time: {bext_metadata['origination_time']}")
-                    
-                    if comments:
-                        # Try to set comments if supported
-                        try:
-                            master_mob['Comments'].value = "; ".join(comments)
-                        except:
-                            # Fallback to using UserComments
-                            try:
-                                master_mob['UserComments'].value = "; ".join(comments)
-                            except:
-                                pass  # Comments not supported in this AAF version
+                # (Embedding handled above via import_audio_essence())
                 
-                # Add INFO metadata as comments
+                # === 3. Create MasterMob ===
+                master_mob = f.create.MasterMob()
+                master_mob.name = Path(wav_metadata.get('filename', 'Unknown')).stem
+                # Set deterministic UMID for consistent batch import behavior
+                master_mob.mob_id = create_deterministic_umid(wav_path, "master")
+                
+                # MasterMob slots - adjust edit rate and length based on embedded vs linked
+                master_edit_rate = sample_rate if embed_audio else fps
+                master_length = audio_frames if embed_audio else video_length
+                
+                # MasterMob slot layout — one master slot per channel (linked or per-channel embedded)
+                for ch_idx in range(channels):
+                        mslot = master_mob.create_timeline_slot(master_edit_rate)
+                        mclip = f.create.SourceClip()
+                        mclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        mclip['Length'].value = master_length
+                        mclip['StartTime'].value = 0
+                        # pick source mob for this channel (per-channel phys mobs OR single wave_mob)
+                        src_mob = channel_mobs[ch_idx] if ch_idx < len(channel_mobs) else channel_mobs[0]
+                        mclip['SourceID'].value = src_mob.mob_id
+                        # determine slot mapping depending on how channels were stored
+                        if embed_audio and channels > 1:
+                            # each channel was embedded into its own SourceMob; its slot id will be 1
+                            mclip['SourceMobSlotID'].value = 1
+                        elif not embed_audio:
+                            # linked WAVEDescriptor has one slot per channel (ch1=1, ch2=3, ...)
+                            mclip['SourceMobSlotID'].value = ch_idx + 1
+                        else:
+                            # embedded single-channel or other cases use slot 1
+                            mclip['SourceMobSlotID'].value = 1
+                        mslot.segment = mclip
+                        mslot.name = wav_metadata.get('filename', 'Unknown')
+                
+                # === 4. Add metadata to MasterMob ===
+                # Add BEXT metadata as comments (prefixed for storage)
+                if bext_metadata:
+                    if bext_metadata.get('description'):
+                        master_mob.comments['BEXT_Description'] = bext_metadata['description']
+                    if bext_metadata.get('originator'):
+                        master_mob.comments['BEXT_Originator'] = bext_metadata['originator']
+                    if bext_metadata.get('originator_reference'):
+                        master_mob.comments['BEXT_Originator_Reference'] = bext_metadata['originator_reference']
+                    if bext_metadata.get('origination_date'):
+                        master_mob.comments['BEXT_Origination_Date'] = bext_metadata['origination_date']
+                    if bext_metadata.get('origination_time'):
+                        master_mob.comments['BEXT_Origination_Time'] = bext_metadata['origination_time']
+                    if bext_metadata.get('time_reference'):
+                        master_mob.comments['BEXT_Time_Reference'] = str(bext_metadata['time_reference'])
+                    if bext_metadata.get('umid'):
+                        master_mob.comments['BEXT_UMID'] = bext_metadata['umid']
+                
+                # Add INFO metadata as comments (prefixed for storage)
                 if info_metadata:
-                    info_comments = []
                     info_mappings = {
-                        'IART': 'Artist',
-                        'ICMT': 'Comment',
-                        'ICOP': 'Copyright',
-                        'ICRD': 'Creation Date',
-                        'IENG': 'Engineer',
-                        'IGNR': 'Genre',
-                        'IKEY': 'Keywords',
-                        'INAM': 'Title',
-                        'IPRD': 'Product',
-                        'ISBJ': 'Subject',
-                        'ISFT': 'Software',
-                        'ISRC': 'Source'
+                        'IART': 'INFO_Artist',
+                        'ICMT': 'INFO_Comment',
+                        'ICOP': 'INFO_Copyright',
+                        'ICRD': 'INFO_Creation_Date',
+                        'IENG': 'INFO_Engineer',
+                        'IGNR': 'INFO_Genre',
+                        'IKEY': 'INFO_Keywords',
+                        'INAM': 'INFO_Title',
+                        'IPRD': 'INFO_Product',
+                        'ISBJ': 'INFO_Subject',
+                        'ISFT': 'INFO_Software',
+                        'ISRC': 'INFO_Source'
                     }
                     
                     for chunk_id, value in info_metadata.items():
                         if value:
-                            label = info_mappings.get(chunk_id, chunk_id)
-                            info_comments.append(f"{label}: {value}")
-                    
-                    if info_comments:
-                        try:
-                            existing_comments = master_mob.get('Comments', {}).get('value', '')
-                            all_comments = [existing_comments] if existing_comments else []
-                            all_comments.extend(info_comments)
-                            master_mob['Comments'].value = "; ".join(all_comments)
-                        except:
-                            # Store in a custom property or ignore if not supported
-                            pass
+                            comment_key = info_mappings.get(chunk_id, f'INFO_{chunk_id}')
+                            master_mob.comments[comment_key] = str(value)
                 
-                # Add UCS category information
+                # Add UCS category information (prefixed for storage)
                 if ucs_metadata and 'primary_category' in ucs_metadata:
                     category = ucs_metadata['primary_category']
-                    ucs_comment = f"UCS Category: {category['category']} > {category['subcategory']} (ID: {category['id']})"
-                    
-                    try:
-                        existing_comments = master_mob.get('Comments', {}).get('value', '')
-                        all_comments = [existing_comments] if existing_comments else []
-                        all_comments.append(ucs_comment)
-                        master_mob['Comments'].value = "; ".join(all_comments)
-                    except:
-                        # Store UCS data in name if comments aren't supported
-                        try:
-                            original_name = master_mob.name
-                            master_mob.name = f"{original_name} [{category['category']}]"
-                        except:
-                            pass
+                    master_mob.comments['UCS_Category'] = category['category']
+                    master_mob.comments['UCS_SubCategory'] = category['subcategory']
+                    master_mob.comments['UCS_ID'] = category['id']
+                    master_mob.comments['UCS_Full_Name'] = category['full_name']
+                    master_mob.comments['UCS_Match_Score'] = str(category['score'])
                 
-                # Create source mob with WAV descriptor
-                source_mob = f.create.SourceMob()
-                source_mob.name = f"{wav_metadata.get('filename', 'Unknown')}_Source"
+                # Add Avid-compatible fields (clean names that appear in Media Composer)
+                # Description field
+                if bext_metadata and bext_metadata.get('description'):
+                    master_mob.comments['Description'] = bext_metadata['description']
+                elif info_metadata and 'INAM' in info_metadata:
+                    master_mob.comments['Description'] = str(info_metadata.get('INAM'))
                 
-                # Create WAVE descriptor
-                wave_descriptor = f.create.WAVEDescriptor()
-                wave_descriptor['SampleRate'].value = wav_metadata.get('sample_rate', 48000)
-                wave_descriptor['Length'].value = wav_metadata.get('frames', 0)
-                wave_descriptor['ContainerFormat'].value = f.dictionary.lookup_containerdef("AAF")
+                # File info (matching ALE column names)
+                master_mob.comments['Name'] = str(wav_path.stem)  # ALE clip name (no extension)
+                master_mob.comments['Filename'] = str(wav_path.name)
+                master_mob.comments['FilePath'] = str(wav_path)
+                master_mob.comments['SampleRate'] = str(sample_rate)
+                master_mob.comments['BitDepth'] = str(bit_depth)
+                master_mob.comments['Channels'] = str(channels)
+                master_mob.comments['Number of Frames'] = str(audio_frames)
                 
-                # Add WAV format summary (required property)
-                fmt_data = self._get_wave_fmt(wav_metadata.get('filepath'))
-                if fmt_data:
-                    wave_descriptor['Summary'].value = fmt_data
+                # Audio format and track info
+                master_mob.comments['AudioFormat'] = 'WAV'
+                if channels == 1:
+                    master_mob.comments['Tracks'] = 'A1'
+                elif channels == 2:
+                    master_mob.comments['Tracks'] = 'A1A2'
                 else:
-                    # Create minimal WAV format data if not found
-                    channels = wav_metadata.get('channels', 1)
-                    sample_rate = wav_metadata.get('sample_rate', 48000)
-                    sample_width = wav_metadata.get('sample_width', 2)
-                    fmt_data = struct.pack('<HHIIHH', 
-                                         1,  # format tag (PCM)
-                                         channels,  # channels
-                                         sample_rate,  # sample rate
-                                         sample_rate * channels * sample_width,  # byte rate
-                                         channels * sample_width,  # block align
-                                         sample_width * 8)  # bits per sample
-                    wave_descriptor['Summary'].value = fmt_data
+                    master_mob.comments['Tracks'] = f"A1A{channels}"
                 
-                # Add locator pointing to the original WAV file
-                if wav_metadata.get('filepath'):
-                    locator = f.create.NetworkLocator()
-                    locator['URLString'].value = f"file://{wav_metadata['filepath']}"
-                    wave_descriptor['Locator'].append(locator)
+                # Duration in seconds
+                master_mob.comments['Duration'] = f"{duration_seconds:.3f}"
                 
-                # Set the descriptor on the source mob
-                source_mob['EssenceDescription'].value = wave_descriptor
+                # Additional INFO fields (clean names)
+                if info_metadata:
+                    if 'IKEY' in info_metadata:
+                        master_mob.comments['Keywords'] = str(info_metadata['IKEY'])
                 
-                # Create audio slot for the source mob FIRST
-                edit_rate = wav_metadata.get('sample_rate', 48000)
-                source_audio_slot = source_mob.create_timeline_slot(edit_rate)
-                source_audio_slot.name = "Audio Track"
+                # Additional BEXT fields (clean names)
+                if bext_metadata:
+                    if bext_metadata.get('originator'):
+                        master_mob.comments['Originator'] = bext_metadata['originator']
+                    if bext_metadata.get('originator_reference'):
+                        master_mob.comments['OriginatorReference'] = bext_metadata['originator_reference']
+                    if bext_metadata.get('origination_date'):
+                        master_mob.comments['Origination Date'] = bext_metadata['origination_date']
+                    if bext_metadata.get('origination_time'):
+                        master_mob.comments['Origination Time'] = bext_metadata['origination_time']
                 
-                # Create a filler segment for the source slot
-                source_filler = f.create.Filler()
-                source_filler['DataDefinition'].value = f.dictionary.lookup_datadef("sound")
-                source_filler['Length'].value = wav_metadata.get('frames', 0)
-                source_audio_slot.segment = source_filler
+                # Category and SubCategory (clean names for Avid)
+                if ucs_metadata and 'primary_category' in ucs_metadata:
+                    category = ucs_metadata['primary_category']
+                    master_mob.comments['Category'] = category.get('category', '')
+                    master_mob.comments['SubCategory'] = category.get('subcategory', '')
+                    master_mob.comments['UCS ID'] = category.get('id', '')
                 
-                # Create timeline slot for the master mob
-                master_timeline_slot = master_mob.create_timeline_slot(edit_rate)
-                master_timeline_slot.name = "Audio"
+                # Timecode fields - get from XML metadata if available
+                timecode_str = None
+                if xml_metadata and 'timecode' in xml_metadata:
+                    timecode_str = xml_metadata['timecode']
                 
-                # Create source clip referencing the source mob
-                source_clip = f.create.SourceClip()
-                source_clip['DataDefinition'].value = f.dictionary.lookup_datadef("sound")
-                source_clip['Length'].value = wav_metadata.get('frames', 0)
-                source_clip['StartTime'].value = 0
-                source_clip['SourceID'].value = source_mob.mob_id
-                source_clip['SourceMobSlotID'].value = source_audio_slot.slot_id
+                if timecode_str:
+                    start_tc = timecode_str
+                    # Calculate end timecode
+                    total_frames = int(audio_frames / sample_rate * fps)
+                    tc_parts = timecode_str.split(':')
+                    if len(tc_parts) == 4:
+                        start_frames = (int(tc_parts[0]) * 3600 * fps + 
+                                      int(tc_parts[1]) * 60 * fps + 
+                                      int(tc_parts[2]) * fps + 
+                                      int(tc_parts[3]))
+                        end_frames = start_frames + total_frames
+                        end_tc = f"{end_frames//(3600*fps):02d}:{(end_frames%(3600*fps))//(60*fps):02d}:{(end_frames%(60*fps))//fps:02d}:{end_frames%fps:02d}"
+                        master_mob.comments['Start'] = start_tc
+                        master_mob.comments['StartTC_24fps'] = start_tc
+                        master_mob.comments['End'] = end_tc
+                    else:
+                        master_mob.comments['Start'] = "00:00:00:00"
+                        master_mob.comments['End'] = "00:00:00:00"
+                else:
+                    master_mob.comments['Start'] = "00:00:00:00"
+                    master_mob.comments['End'] = "00:00:00:00"
                 
-                master_timeline_slot.segment = source_clip
+                # Tape field - set to directory name for batch import consistency
+                tape_name = Path(wav_path).parent.name if wav_path else "Unknown"
+                master_mob.comments['Tape'] = tape_name
                 
-                # Add mobs to the content
-                f.content.mobs.append(master_mob)
-                f.content.mobs.append(source_mob)
+                # Scene and Take (empty by default, can be populated from filename parsing if needed)
+                master_mob.comments['Scene'] = ""
+                master_mob.comments['Take'] = ""
+                
+                # Add mobs to content based on embed_audio setting
+                if embed_audio:
+                    # Embedded: one PCM SourceMob per channel (created earlier) + MasterMob
+                    for cm in channel_mobs:
+                        # avoid re-appending if already attached
+                        if cm not in f.content.mobs:
+                            f.content.mobs.append(cm)
+                    f.content.mobs.append(master_mob)
+                else:
+                    # Linked: WAVEDescriptor SourceMob, MasterMob, ImportDescriptor SourceMob
+                    f.content.mobs.append(channel_mobs[0])  # WAVE mob
+                    f.content.mobs.append(master_mob)
+                    f.content.mobs.append(import_mob)
                 
                 return output_path
                 
         except Exception as e:
-            raise Exception(f"Error creating AAF file: {e}")
+            # Raise with full traceback to make debugging failing files much easier
+            import traceback
+            tb = traceback.format_exc()
+            msg = f"Error creating AAF file: {e}\nFull traceback:\n{tb}"
+            raise Exception(msg)
+
+    def create_multi_aaf(self, wav_entries: List[Dict[str, Dict]], output_path: str,
+                         fps: float = 24, embed_audio: bool = False, link_mode: str = 'import') -> str:
+        """Create a single AAF that contains multiple master clips (one per WAV entry).
+        
+        Note: Embedded audio is not supported for multi-clip AAFs due to file size concerns.
+
+        wav_entries: list of dicts with keys: wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata
+        """
+        if embed_audio:
+            raise ValueError("Multi-clip AAFs with embedded audio are not supported due to file size concerns. Use linked mode instead.")
+            
+        try:
+            fps = int(fps)
+            with aaf2.open(output_path, 'w') as f:
+                # Set file identification
+                f.header['ObjectModelVersion'].value = 1
+                f.header['Version'].value = {'major': 1, 'minor': 2}
+                for ident in f.header['IdentificationList'].value:
+                    ident['ProductName'].value = "WAVsToAAF"
+                    ident['CompanyName'].value = "Jason Brodkey"
+                    ident['ProductVersionString'].value = __version__
+                    break
+
+                for entry in wav_entries:
+                    wav_metadata = entry.get('wav_metadata', {})
+                    bext_metadata = entry.get('bext_metadata', {})
+                    info_metadata = entry.get('info_metadata', {})
+                    xml_metadata = entry.get('xml_metadata', {})
+                    ucs_metadata = entry.get('ucs_metadata', {})
+
+                    # Audio params
+                    channels = int(wav_metadata.get('channels', 1))
+                    sample_rate = int(wav_metadata.get('sample_rate', 48000))
+                    audio_frames = int(wav_metadata.get('frames', 0))
+                    sample_width = int(wav_metadata.get('sample_width', 2))
+                    bit_depth = int(sample_width * 8)
+                    duration_seconds = audio_frames / sample_rate if sample_rate else 0
+                    # Use sample_rate as timeline edit rate for audio AAF (spec-compliant)
+                    timeline_edit_rate = sample_rate
+                    clip_length = audio_frames
+
+                    # Resolve path
+                    from pathlib import Path
+                    wav_path = Path(wav_metadata.get('filepath', ''))
+
+                    # Currently support 'import' mode for multi-clip AAF. 'pcm' can be added if needed.
+                    # 1) ImportDescriptor SourceMob
+                    import_mob = f.create.SourceMob()
+                    import_mob.name = wav_metadata.get('filename', 'Unknown')
+                    # Set deterministic UMID for consistent batch import behavior
+                    import_mob.mob_id = create_deterministic_umid(wav_path, "import")
+                    import_desc = f.create.ImportDescriptor()
+                    if wav_path.exists():
+                        from urllib.parse import quote
+                        abs_posix = wav_path.as_posix()
+                        file_url_users = f"file://{quote(abs_posix)}"
+                        file_url_localhost = f"file://localhost{quote(abs_posix)}"
+                        abs_path = abs_posix
+                        filename_only = wav_path.name
+                        loc1 = f.create.NetworkLocator(); loc1['URLString'].value = file_url_users; import_desc['Locator'].append(loc1)
+                        loc2 = f.create.NetworkLocator(); loc2['URLString'].value = file_url_localhost; import_desc['Locator'].append(loc2)
+                        loc3 = f.create.NetworkLocator(); loc3['URLString'].value = abs_path; import_desc['Locator'].append(loc3)
+                        loc4 = f.create.NetworkLocator(); loc4['URLString'].value = filename_only; import_desc['Locator'].append(loc4)
+                    import_mob.descriptor = import_desc
+
+                    # Import slots
+                    if channels == 1:
+                        slot = import_mob.create_timeline_slot(timeline_edit_rate)
+                        clip = f.create.SourceClip()
+                        clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        clip['Length'].value = clip_length
+                        clip['StartTime'].value = 0
+                        slot.segment = clip
+                        slot.name = wav_metadata.get('filename', 'Unknown')
+                        tc_slot = import_mob.create_timeline_slot(timeline_edit_rate)
+                        tc = f.create.Timecode(length=clip_length)
+                        tc['Start'].value = 0
+                        tc['FPS'].value = timeline_edit_rate  # Use timeline rate for timecode
+                        tc_slot.segment = tc
+                    else:
+                        slot1 = import_mob.create_timeline_slot(timeline_edit_rate)
+                        clip1 = f.create.SourceClip()
+                        clip1['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        clip1['Length'].value = clip_length
+                        clip1['StartTime'].value = 0
+                        slot1.segment = clip1
+                        slot1.name = wav_metadata.get('filename', 'Unknown')
+                        tc_slot = import_mob.create_timeline_slot(timeline_edit_rate)
+                        tc = f.create.Timecode(length=clip_length)
+                        tc['Start'].value = 0
+                        tc['FPS'].value = timeline_edit_rate
+                        tc_slot.segment = tc
+                        for ch_idx in range(1, channels):
+                            slot = import_mob.create_timeline_slot(timeline_edit_rate)
+                            clip = f.create.SourceClip()
+                            clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                            clip['Length'].value = clip_length
+                            clip['StartTime'].value = 0
+                            slot.segment = clip
+                            slot.name = wav_metadata.get('filename', 'Unknown')
+
+                    # 2) WAVEDescriptor SourceMob
+                    wave_mob = f.create.SourceMob()
+                    wave_mob.name = wav_metadata.get('filename', 'Unknown')
+                    # Set deterministic UMID for consistent batch import behavior
+                    wave_mob.mob_id = create_deterministic_umid(wav_path, "wave")
+                    wave_desc = f.create.WAVEDescriptor()
+                    wave_desc['SampleRate'].value = sample_rate
+                    wave_desc['Length'].value = audio_frames
+                    try:
+                        wave_desc['ContainerFormat'].value = f.dictionary.lookup_containerdef('OMF')
+                    except Exception:
+                        wave_desc['ContainerFormat'].value = f.dictionary.lookup_containerdef('AAF')
+                    summary = bytearray()
+                    summary.extend(b'RIFF'); summary.extend(struct.pack('<I', 0)); summary.extend(b'WAVE')
+                    summary.extend(b'fmt '); summary.extend(struct.pack('<I', 16)); summary.extend(struct.pack('<H', 1))
+                    summary.extend(struct.pack('<H', channels)); summary.extend(struct.pack('<I', int(sample_rate)))
+                    bytes_per_sec = int(sample_rate * sample_width * channels)
+                    summary.extend(struct.pack('<I', bytes_per_sec))
+                    summary.extend(struct.pack('<H', int(sample_width * channels)))
+                    summary.extend(struct.pack('<H', int(bit_depth)))
+                    summary.extend(b'data'); summary.extend(struct.pack('<I', int(audio_frames * sample_width * channels)))
+                    wave_desc['Summary'].value = bytes(summary)
+                    wave_mob.descriptor = wave_desc
+                    channel_mobs = [wave_mob]
+                    for ch_idx in range(channels):
+                        wslot = wave_mob.create_timeline_slot(timeline_edit_rate)
+                        wclip = f.create.SourceClip()
+                        wclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        wclip['Length'].value = clip_length
+                        wclip['StartTime'].value = 0
+                        wclip['SourceID'].value = import_mob.mob_id
+                        import_slot_id = 1 if ch_idx == 0 else (ch_idx + 2)
+                        wclip['SourceMobSlotID'].value = import_slot_id
+                        wslot.segment = wclip
+
+                    # 3) MasterMob
+                    master_mob = f.create.MasterMob()
+                    master_mob.name = Path(wav_metadata.get('filename', 'Unknown')).stem
+                    # Set deterministic UMID for consistent batch import behavior
+                    master_mob.mob_id = create_deterministic_umid(wav_path, "master")
+                    for ch_idx in range(channels):
+                        mslot = master_mob.create_timeline_slot(timeline_edit_rate)
+                        mclip = f.create.SourceClip()
+                        mclip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                        mclip['Length'].value = clip_length
+                        mclip['StartTime'].value = 0
+                        mclip['SourceID'].value = wave_mob.mob_id
+                        mclip['SourceMobSlotID'].value = ch_idx + 1
+                        mslot.segment = mclip
+                        mslot.name = wav_metadata.get('filename', 'Unknown')
+
+                    # 4) Metadata on MasterMob
+                    if bext_metadata:
+                        if bext_metadata.get('description'):
+                            master_mob.comments['BEXT_Description'] = bext_metadata['description']
+                        if bext_metadata.get('originator'):
+                            master_mob.comments['BEXT_Originator'] = bext_metadata['originator']
+                        if bext_metadata.get('originator_reference'):
+                            master_mob.comments['BEXT_Originator_Reference'] = bext_metadata['originator_reference']
+                        if bext_metadata.get('origination_date'):
+                            master_mob.comments['BEXT_Origination_Date'] = bext_metadata['origination_date']
+                        if bext_metadata.get('origination_time'):
+                            master_mob.comments['BEXT_Origination_Time'] = bext_metadata['origination_time']
+                        if bext_metadata.get('time_reference'):
+                            master_mob.comments['BEXT_Time_Reference'] = str(bext_metadata['time_reference'])
+                        if bext_metadata.get('umid'):
+                            master_mob.comments['BEXT_UMID'] = bext_metadata['umid']
+                    if info_metadata:
+                        info_mappings = {
+                            'IART': 'INFO_Artist','ICMT': 'INFO_Comment','ICOP': 'INFO_Copyright','ICRD': 'INFO_Creation_Date',
+                            'IENG': 'INFO_Engineer','IGNR': 'INFO_Genre','IKEY': 'INFO_Keywords','INAM': 'INFO_Title',
+                            'IPRD': 'INFO_Product','ISBJ': 'INFO_Subject','ISFT': 'INFO_Software','ISRC': 'INFO_Source'
+                        }
+                        for chunk_id, value in info_metadata.items():
+                            if value:
+                                master_mob.comments[info_mappings.get(chunk_id, f'INFO_{chunk_id}')] = str(value)
+                    if ucs_metadata and 'primary_category' in ucs_metadata:
+                        category = ucs_metadata['primary_category']
+                        master_mob.comments['UCS_Category'] = category.get('category','')
+                        master_mob.comments['UCS_SubCategory'] = category.get('subcategory','')
+                        master_mob.comments['UCS_ID'] = category.get('id','')
+                        master_mob.comments['UCS_Full_Name'] = category.get('full_name','')
+                        master_mob.comments['UCS_Match_Score'] = str(category.get('score',''))
+                        master_mob.comments['Category'] = category.get('category','')
+                        master_mob.comments['SubCategory'] = category.get('subcategory','')
+                        master_mob.comments['UCS ID'] = category.get('id','')
+                    if bext_metadata and bext_metadata.get('description'):
+                        master_mob.comments['Description'] = bext_metadata['description']
+                    elif info_metadata and 'INAM' in info_metadata:
+                        master_mob.comments['Description'] = str(info_metadata.get('INAM'))
+                    master_mob.comments['Name'] = str(Path(wav_metadata.get('filename','Unknown')).stem)
+                    master_mob.comments['Filename'] = str(Path(wav_metadata.get('filename','Unknown')).name)
+                    master_mob.comments['FilePath'] = str(wav_path)
+                    master_mob.comments['SampleRate'] = str(sample_rate)
+                    master_mob.comments['BitDepth'] = str(bit_depth)
+                    master_mob.comments['Channels'] = str(channels)
+                    master_mob.comments['Number of Frames'] = str(audio_frames)
+                    master_mob.comments['AudioFormat'] = 'WAV'
+                    master_mob.comments['Tracks'] = 'A1' if channels==1 else ('A1A2' if channels==2 else f"A1A{channels}")
+                    master_mob.comments['Duration'] = f"{duration_seconds:.3f}"
+                    master_mob.comments['Start'] = "00:00:00:00"
+                    master_mob.comments['End'] = "00:00:00:00"
+                    # Tape field - set to directory name for batch import consistency
+                    tape_name = Path(wav_path).parent.name if wav_path else "Unknown"
+                    master_mob.comments['Tape'] = tape_name
+                    master_mob.comments['Scene'] = ""
+                    master_mob.comments['Take'] = ""
+
+                    # Order: WAVEDesc SourceMob, MasterMob, ImportDesc SourceMob
+                    f.content.mobs.append(wave_mob)
+                    f.content.mobs.append(master_mob)
+                    f.content.mobs.append(import_mob)
+
+                return output_path
+        except Exception as e:
+            raise Exception(f"Error creating multi-clip AAF: {e}")
+
+    def create_multi_tape_aaf(self, wav_entries: List[Dict[str, Dict]], output_path: str,
+                             fps: float = 24) -> str:
+        """Create a single AAF with multiple clips using TapeDescriptor structure (like ALE-exported AAFs).
+
+        wav_entries: list of dicts with keys: wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata
+        """
+        try:
+            fps = int(fps)
+            with aaf2.open(output_path, 'w') as f:
+                # Set file identification
+                f.header['ObjectModelVersion'].value = 1
+                f.header['Version'].value = {'major': 1, 'minor': 2}
+                for ident in f.header['IdentificationList'].value:
+                    ident['ProductName'].value = "WAVsToAAF"
+                    ident['CompanyName'].value = "Jason Brodkey"
+                    ident['ProductVersionString'].value = __version__
+                    break
+
+                for entry in wav_entries:
+                    wav_metadata = entry.get('wav_metadata', {})
+                    bext_metadata = entry.get('bext_metadata', {})
+                    info_metadata = entry.get('info_metadata', {})
+                    xml_metadata = entry.get('xml_metadata', {})
+                    ucs_metadata = entry.get('ucs_metadata', {})
+
+                    # Audio params
+                    channels = int(wav_metadata.get('channels', 1))
+                    sample_rate = int(wav_metadata.get('sample_rate', 48000))
+                    audio_frames = int(wav_metadata.get('frames', 0))
+                    sample_width = int(wav_metadata.get('sample_width', 2))
+                    bit_depth = int(sample_width * 8)
+                    duration_seconds = audio_frames / sample_rate if sample_rate else 0
+                    video_length = int(duration_seconds * fps)
+
+                    # Resolve path
+                    from pathlib import Path
+                    wav_path = Path(wav_metadata.get('filepath', ''))
+                    wav_stem = wav_path.stem
+
+                    # 1) TapeDescriptor SourceMob (mimics ALE-exported structure)
+                    tape_mob = f.create.SourceMob()
+                    tape_mob.name = f"Tape_{wav_stem}"
+                    # Use Avid-style UMID prefix (01010f10) with tape_mode=True
+                    tape_mob.mob_id = create_deterministic_umid(wav_path, "tape", tape_mode=True)
+                    
+                    tape_desc = f.create.from_name('TapeDescriptor')
+                    tape_desc['ColorFrame'].value = 0
+                    tape_mob.descriptor = tape_desc
+
+                    # Create slots like ALE exports: video slot (1) + audio slot (2)
+                    # Video slot
+                    video_slot = tape_mob.create_timeline_slot(fps)
+                    video_slot.slot_id = 1
+                    video_clip = f.create.SourceClip()
+                    video_clip['DataDefinition'].value = f.dictionary.lookup_datadef('picture')
+                    video_clip['Length'].value = video_length
+                    video_clip['StartTime'].value = 0
+                    video_clip['SourceID'].value = aaf2.mobid.MobID()  # NULL source
+                    video_clip['SourceMobSlotID'].value = 0
+                    video_slot.segment = video_clip
+
+                    # Audio slot  
+                    audio_slot = tape_mob.create_timeline_slot(fps)
+                    audio_slot.slot_id = 2
+                    audio_clip = f.create.SourceClip()
+                    audio_clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                    audio_clip['Length'].value = video_length
+                    audio_clip['StartTime'].value = 0
+                    audio_clip['SourceID'].value = aaf2.mobid.MobID()  # NULL source
+                    audio_clip['SourceMobSlotID'].value = 0
+                    audio_slot.segment = audio_clip
+
+                    # 2) MasterMob (mimics ALE-exported naming: filename.Exported.01)
+                    master_mob = f.create.MasterMob()
+                    master_mob.name = f"{wav_stem}.Exported.01"
+                    # Use Avid-style UMID prefix (01010f10) with tape_mode=True
+                    master_mob.mob_id = create_deterministic_umid(wav_path, "master", tape_mode=True)
+
+                    # Single audio slot referencing the tape
+                    master_slot = master_mob.create_timeline_slot(fps)
+                    master_slot.slot_id = 1
+                    master_clip = f.create.SourceClip()
+                    master_clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                    master_clip['Length'].value = video_length
+                    master_clip['StartTime'].value = 0
+                    master_clip['SourceID'].value = tape_mob.mob_id
+                    master_clip['SourceMobSlotID'].value = 2  # Reference audio slot on tape
+                    master_slot.segment = master_clip
+
+                    # 3) Add metadata comments to MasterMob (same as ImportDescriptor version)
+                    if bext_metadata:
+                        if bext_metadata.get('description'):
+                            master_mob.comments['BEXT_Description'] = bext_metadata['description']
+                        if bext_metadata.get('originator'):
+                            master_mob.comments['BEXT_Originator'] = bext_metadata['originator']
+                        if bext_metadata.get('originator_reference'):
+                            master_mob.comments['BEXT_Originator_Reference'] = bext_metadata['originator_reference']
+                        if bext_metadata.get('origination_date'):
+                            master_mob.comments['BEXT_Origination_Date'] = bext_metadata['origination_date']
+                        if bext_metadata.get('origination_time'):
+                            master_mob.comments['BEXT_Origination_Time'] = bext_metadata['origination_time']
+                        if bext_metadata.get('time_reference'):
+                            master_mob.comments['BEXT_Time_Reference'] = str(bext_metadata['time_reference'])
+                        if bext_metadata.get('umid'):
+                            master_mob.comments['BEXT_UMID'] = bext_metadata['umid']
+                    if info_metadata:
+                        info_mappings = {
+                            'IART': 'INFO_Artist','ICMT': 'INFO_Comment','ICOP': 'INFO_Copyright','ICRD': 'INFO_Creation_Date',
+                            'IENG': 'INFO_Engineer','IGNR': 'INFO_Genre','IKEY': 'INFO_Keywords','INAM': 'INFO_Title',
+                            'IPRD': 'INFO_Product','ISBJ': 'INFO_Subject','ISFT': 'INFO_Software','ISRC': 'INFO_Source'
+                        }
+                        for chunk_id, value in info_metadata.items():
+                            if value:
+                                master_mob.comments[info_mappings.get(chunk_id, f'INFO_{chunk_id}')] = str(value)
+                    if ucs_metadata and 'primary_category' in ucs_metadata:
+                        category = ucs_metadata['primary_category']
+                        master_mob.comments['UCS_Category'] = category.get('category','')
+                        master_mob.comments['UCS_SubCategory'] = category.get('subcategory','')
+                        master_mob.comments['UCS_ID'] = category.get('id','')
+                        master_mob.comments['UCS_Full_Name'] = category.get('full_name','')
+                        master_mob.comments['UCS_Match_Score'] = str(category.get('score',''))
+                        master_mob.comments['Category'] = category.get('category','')
+                        master_mob.comments['SubCategory'] = category.get('subcategory','')
+                        master_mob.comments['UCS ID'] = category.get('id','')
+                    if bext_metadata and bext_metadata.get('description'):
+                        master_mob.comments['Description'] = bext_metadata['description']
+                    elif info_metadata and 'INAM' in info_metadata:
+                        master_mob.comments['Description'] = str(info_metadata.get('INAM'))
+                    master_mob.comments['Name'] = str(Path(wav_metadata.get('filename','Unknown')).stem)
+                    master_mob.comments['Filename'] = str(Path(wav_metadata.get('filename','Unknown')).name)
+                    master_mob.comments['FilePath'] = str(wav_path)
+                    master_mob.comments['SampleRate'] = str(sample_rate)
+                    master_mob.comments['BitDepth'] = str(bit_depth)
+                    master_mob.comments['Channels'] = str(channels)
+                    master_mob.comments['Number of Frames'] = str(audio_frames)
+                    master_mob.comments['AudioFormat'] = 'WAV'
+                    master_mob.comments['Tracks'] = 'A1' if channels==1 else ('A1A2' if channels==2 else f"A1A{channels}")
+                    master_mob.comments['Duration'] = f"{duration_seconds:.3f}"
+                    master_mob.comments['Start'] = "00:00:00:00"
+                    master_mob.comments['End'] = "00:00:00:00"
+                    master_mob.comments['Tape'] = ""
+                    master_mob.comments['Scene'] = ""
+                    master_mob.comments['Take'] = ""
+
+                    # Add mobs to content (order: TapeDescriptor SourceMob, then MasterMob)
+                    f.content.mobs.append(tape_mob)
+                    f.content.mobs.append(master_mob)
+
+                return output_path
+        except Exception as e:
+            raise Exception(f"Error creating multi-clip tape AAF: {e}")
     
     def _get_wave_fmt(self, wav_path: str) -> bytes:
         """Extract WAV format chunk for Summary property"""
@@ -819,6 +1742,111 @@ class AAFGenerator:
         hash_hex = hash_obj.hexdigest()
         return f"urn:uuid:{hash_hex[:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
 
+    def create_tape_aaf_file(self, wav_metadata: Dict, bext_metadata: Dict, info_metadata: Dict, 
+                            xml_metadata: Dict, ucs_metadata: Dict, output_path: str, 
+                            fps: float = 24, embed_audio: bool = True) -> str:
+        """
+        Create AAF file using TapeDescriptor structure (like ALE-exported AAFs)
+        
+        This replicates the successful structure found in ALE-exported AAFs:
+        - Uses TapeDescriptor instead of ImportDescriptor
+        - Uses Avid-style UMID prefix (01010f10)
+        - Simpler 2-mob structure: MasterMob + TapeDescriptor SourceMob
+        """
+        try:
+            from pathlib import Path
+            wav_path = Path(wav_metadata.get('filepath', ''))
+            
+            # Extract audio parameters
+            try:
+                channels = int(wav_metadata.get('channels', 1))
+                sample_rate = int(wav_metadata.get('sample_rate', 48000))
+                audio_frames = int(wav_metadata.get('frames', 0))
+                sample_width = int(wav_metadata.get('sample_width', 2))
+                bit_depth = int(sample_width * 8)
+            except (ValueError, TypeError) as e:
+                raise Exception(f"Invalid audio parameters: {e}")
+            
+            fps = int(fps)
+            duration_seconds = audio_frames / sample_rate if sample_rate else 0
+            video_length = int(duration_seconds * fps)
+            
+            with aaf2.open(output_path, 'w') as f:
+                # Set file identification (same as working ALE exports)
+                f.header['ObjectModelVersion'].value = 1
+                f.header['Version'].value = {'major': 1, 'minor': 2}
+                
+                # Create TapeDescriptor SourceMob (like "wavTest_1" in ALE exports)
+                tape_mob = f.create.SourceMob()
+                tape_mob.name = f"Tape_{wav_path.stem}"  # Simplified name
+                tape_mob.mob_id = create_deterministic_umid(wav_path, "tape", tape_mode=True)
+                
+                # Create TapeDescriptor
+                tape_desc = f.create.from_name('TapeDescriptor')
+                tape_desc['ColorFrame'].value = 0  # Match ALE exports
+                tape_mob.descriptor = tape_desc
+                
+                # Create multiple slots like ALE exports (simplified version)
+                # Slot 1: Video (Picture data definition)
+                vid_slot = tape_mob.create_timeline_slot(fps)
+                vid_clip = f.create.SourceClip()
+                vid_clip['DataDefinition'].value = f.dictionary.lookup_datadef('picture')
+                vid_clip['Length'].value = video_length
+                vid_clip['StartTime'].value = 0
+                vid_clip['SourceID'].value = aaf2.mobid.MobID()  # Null source
+                vid_clip['SourceMobSlotID'].value = 0
+                vid_slot.segment = vid_clip
+                
+                # Slot 2: Audio (Sound data definition)  
+                aud_slot = tape_mob.create_timeline_slot(fps)
+                aud_clip = f.create.SourceClip()
+                aud_clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                aud_clip['Length'].value = video_length
+                aud_clip['StartTime'].value = 0
+                aud_clip['SourceID'].value = aaf2.mobid.MobID()  # Null source
+                aud_clip['SourceMobSlotID'].value = 0
+                aud_slot.segment = aud_clip
+                
+                # Create MasterMob
+                master_mob = f.create.MasterMob()
+                master_mob.name = f"{wav_path.stem}.Exported.01"  # Match ALE export naming
+                master_mob.mob_id = create_deterministic_umid(wav_path, "master", tape_mode=True)
+                
+                # MasterMob slot referencing TapeDescriptor
+                master_slot = master_mob.create_timeline_slot(fps)
+                master_clip = f.create.SourceClip()
+                master_clip['DataDefinition'].value = f.dictionary.lookup_datadef('sound')
+                master_clip['Length'].value = video_length
+                master_clip['StartTime'].value = 0
+                master_clip['SourceID'].value = tape_mob.mob_id
+                master_clip['SourceMobSlotID'].value = 2  # Reference audio slot
+                master_slot.segment = master_clip
+                
+                # Add metadata to MasterMob
+                if bext_metadata.get('description'):
+                    master_mob.comments['Description'] = bext_metadata['description']
+                if ucs_metadata and 'primary_category' in ucs_metadata:
+                    category = ucs_metadata['primary_category']
+                    master_mob.comments['Category'] = category['category']
+                    master_mob.comments['SubCategory'] = category['subcategory']
+                
+                # Set standard comments
+                master_mob.comments['Start'] = "00:00:00:00"
+                master_mob.comments['End'] = "00:00:00:00"
+                master_mob.comments['Tape'] = ""
+                master_mob.comments['Scene'] = ""
+                master_mob.comments['Take'] = ""
+                
+                # Add mobs to content
+                f.content.mobs.append(master_mob)
+                f.content.mobs.append(tape_mob)
+                
+                return output_path
+                
+        except Exception as e:
+            print(f"Error creating tape-mode AAF: {e}")
+            raise
+
 class WAVsToAAFProcessor:
     """Main processor class for converting WAV files to AAF format"""
     
@@ -827,104 +1855,262 @@ class WAVsToAAFProcessor:
         self.generator = AAFGenerator()
         self.ucs_processor = UCSProcessor()
     
-    def process_directory(self, input_dir: str, output_dir: str) -> int:
+    def process_directory(self, input_dir: str, output_dir: str, fps: float = 24, embed_audio: bool = False,
+                          link_mode: str = 'import', emit_ale: bool = False, one_aaf: bool = False,
+                          near_sources: bool = False, tape_mode: bool = False, relative_locators: bool = False,
+                          skip_log_path: Optional[str] = None, auto_skip_log: bool = False,
+                          allow_ucs_guess: bool = True) -> int:
         """Process all WAV files in a directory"""
         input_path = Path(input_dir)
         output_path = Path(output_dir)
-        
+
         if not input_path.exists():
             print(f"Error: Input directory '{input_dir}' does not exist")
             return 1
-        
+
         # Create output directory
         output_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Find WAV files
         wav_files = []
         for ext in self.extractor.supported_formats:
             wav_files.extend(input_path.glob(f"**/*{ext}"))
             wav_files.extend(input_path.glob(f"**/*{ext.upper()}"))
-        
+
         if not wav_files:
             print(f"No WAV files found in '{input_dir}'")
             return 1
-        
+
         print(f"Found {len(wav_files)} WAV file(s) to process...")
-        
-        processed = 0
-        for wav_file in wav_files:
+
+        # Prepare ALE rows (optional)
+        ale_rows: List[Dict[str, str]] = []
+
+        def add_ale_row_from_wavmeta(wav_path: Path, wav_meta: Dict):
             try:
-                print(f"Processing: {wav_file.name}")
-                
-                # Extract metadata
-                wav_metadata = self.extractor.extract_basic_info(str(wav_file))
-                
-                if not wav_metadata:
-                    print(f"  Skipping {wav_file.name}: Could not read metadata")
-                    continue
-                
-                # Extract all metadata chunks
-                all_chunks = self.extractor.extract_all_metadata_chunks(str(wav_file))
-                
-                # Separate chunk types
-                bext_metadata = {k: v for k, v in all_chunks.items() if k in [
-                    'description', 'originator', 'originator_reference', 'origination_date', 
-                    'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
-                    'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
-                ]}
-                
-                # Extract XML metadata (keys with XML prefixes)
-                xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
-                xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
-                
-                # INFO metadata is everything else (not BEXT or XML)
-                used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
-                info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
-                
-                # Show metadata found
-                if info_metadata:
-                    info_items = [f"{k}={v}" for k, v in info_metadata.items() if v]
-                    if info_items:
-                        print(f"  INFO metadata: {', '.join(info_items[:3])}{'...' if len(info_items) > 3 else ''}")
-                
-                if xml_metadata:
-                    xml_types = set(k.split('_')[0] for k in xml_metadata.keys() if '_' in k)
-                    if xml_types:
-                        print(f"  XML metadata: {', '.join(xml_types)}")
-                
-                # UCS categorization
-                ucs_metadata = self.ucs_processor.categorize_sound(
-                    wav_file.name, 
-                    bext_metadata.get('description', '')
-                )
-                
-                if ucs_metadata and 'primary_category' in ucs_metadata:
-                    category = ucs_metadata['primary_category']
-                    print(f"  UCS Category: {category['category']} > {category['subcategory']} ({category['score']:.1f})")
-                
-                # Generate AAF file
-                output_filename = wav_file.stem + '.aaf'
-                output_file = output_path / output_filename
-                
-                aaf_file_path = self.generator.create_aaf_file(
-                    wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, str(output_file)
-                )
-                
-                print(f"  Created: {output_filename}")
-                processed += 1
-                
-            except Exception as e:
-                print(f"  Error processing {wav_file.name}: {e}")
+                ch = int(wav_meta.get('channels', 1))
+                sr = int(wav_meta.get('sample_rate', 48000))
+                frames = int(wav_meta.get('frames', 0))
+                dur = (frames / sr) if sr else 0.0
+                name = wav_path.stem
+                audio_rate = '48kHz' if sr == 48000 else (f"{sr/1000:g}kHz")
+                ale_rows.append({
+                    'Name': name,
+                    'Tracks': ('A1' if ch==1 else ('A1A2' if ch==2 else f"A1A{ch}")),
+                    'Start': '',
+                    'End': '',
+                    'Tape': '',
+                    'Source File': wav_path.name,
+                    'AudioRate': audio_rate,
+                    'SampleRate': f"{sr}Hz",
+                    'Channels': str(ch),
+                    'Duration': f"{dur:.3f}",
+                })
+            except Exception:
+                pass
+
+        processed = 0
+        low_confidence_items = []  # collect low-confidence UCS matches for reporting
+        if one_aaf:
+            # Check if embedded mode is requested for multi-clip AAF
+            if embed_audio:
+                print("Warning: Multi-clip AAFs with embedded audio would be extremely large.")
+                print("Falling back to individual AAFs per clip.")
+                print("Use --linked flag if you want multi-clip AAFs with external file references.")
+                one_aaf = False  # Force individual AAF mode
         
+        if one_aaf:
+            # Build multi-clip AAF in one file (linked mode only)
+            wav_entries = []
+            for wav_file in wav_files:
+                try:
+                    wav_meta = self.extractor.extract_basic_info(str(wav_file))
+                    if not wav_meta:
+                        print(f"  Skipping {wav_file.name}: Could not read metadata")
+                        continue
+                    all_chunks = self.extractor.extract_all_metadata_chunks(str(wav_file))
+                    bext_metadata = {k: v for k, v in all_chunks.items() if k in [
+                        'description', 'originator', 'originator_reference', 'origination_date',
+                        'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
+                        'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
+                    ]}
+                    xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
+                    xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
+                    used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
+                    info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
+
+                    # Resolve UCS metadata taking INFO / iXML fields into account
+                    ucs_metadata = self._resolve_ucs_metadata(
+                        wav_file.name,
+                        bext_metadata.get('description', ''),
+                        info_metadata, xml_metadata,
+                        allow_guess=allow_ucs_guess
+                    )
+                    # Collect low-confidence fuzzy matches for reporting (multi-clip path)
+                    try:
+                        if allow_ucs_guess and ucs_metadata and 'primary_category' in ucs_metadata:
+                            score = float(ucs_metadata['primary_category'].get('score', 0.0))
+                            if 0 < score < getattr(self, '_ucs_min_score', 25.0):
+                                low_confidence_items.append({
+                                    'file': str(wav_file.name),
+                                    'description': bext_metadata.get('description',''),
+                                    'ucs_id': ucs_metadata['primary_category'].get('id',''),
+                                    'category': ucs_metadata['primary_category'].get('category',''),
+                                    'subcategory': ucs_metadata['primary_category'].get('subcategory',''),
+                                    'score': score,
+                                })
+                    except Exception:
+                        pass
+
+                    wav_entries.append({
+                        'wav_metadata': wav_meta,
+                        'bext_metadata': bext_metadata,
+                        'info_metadata': info_metadata,
+                        'xml_metadata': xml_metadata,
+                        'ucs_metadata': ucs_metadata,
+                    })
+                    add_ale_row_from_wavmeta(wav_file, wav_meta)
+                except Exception as e:
+                    print(f"  Error preparing {wav_file.name}: {e}")
+
+            out_file = output_path / 'batch.aaf'
+            try:
+                if tape_mode:
+                    self.generator.create_multi_tape_aaf(wav_entries, str(out_file), fps=fps)
+                    print(f"  Created (tape-mode): {out_file.name}")
+                else:
+                    self.generator.create_multi_aaf(wav_entries, str(out_file), fps=fps, embed_audio=embed_audio, link_mode=link_mode)
+                    print(f"  Created: {out_file.name}")
+                processed = len(wav_entries)
+            except Exception as e:
+                print(f"  Error creating multi-clip AAF: {e}")
+        else:
+            # One AAF per clip
+            for wav_file in wav_files:
+                try:
+                    print(f"Processing: {wav_file.name}")
+                    wav_metadata = self.extractor.extract_basic_info(str(wav_file))
+                    if not wav_metadata:
+                        print(f"  Skipping {wav_file.name}: Could not read metadata")
+                        continue
+                    # Extract all metadata chunks
+                    all_chunks = self.extractor.extract_all_metadata_chunks(str(wav_file))
+                    bext_metadata = {k: v for k, v in all_chunks.items() if k in [
+                        'description', 'originator', 'originator_reference', 'origination_date',
+                        'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
+                        'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
+                    ]}
+                    xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
+                    xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
+                    used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
+                    info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
+
+                    ucs_metadata = self._resolve_ucs_metadata(
+                        wav_file.name,
+                        bext_metadata.get('description', ''),
+                        info_metadata, xml_metadata,
+                        allow_guess=allow_ucs_guess
+                    )
+
+                    try:
+                        if allow_ucs_guess and ucs_metadata and 'primary_category' in ucs_metadata:
+                            score = float(ucs_metadata['primary_category'].get('score', 0.0))
+                            if 0 < score < getattr(self, '_ucs_min_score', 25.0):
+                                low_confidence_items.append({
+                                    'file': str(wav_file.name),
+                                    'description': bext_metadata.get('description',''),
+                                    'ucs_id': ucs_metadata['primary_category'].get('id',''),
+                                    'category': ucs_metadata['primary_category'].get('category',''),
+                                    'subcategory': ucs_metadata['primary_category'].get('subcategory',''),
+                                    'score': score,
+                                })
+                    except Exception:
+                        pass
+                    output_filename = wav_file.stem + '.aaf'
+                    
+                    # Choose output location based on near_sources flag
+                    if near_sources:
+                        # Save AAF next to the source WAV file
+                        out_file = wav_file.parent / output_filename
+                        print(f"  Saving near source: {out_file}")
+                    else:
+                        # Save AAF in the output directory
+                        out_file = output_path / output_filename
+                    
+                    # Choose AAF generation method based on tape_mode flag
+                    if tape_mode:
+                        self.generator.create_tape_aaf_file(
+                            wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, str(out_file),
+                            fps=fps, embed_audio=embed_audio
+                        )
+                        print(f"  Created (tape-mode): {output_filename}")
+                    else:
+                        self.generator.create_aaf_file(
+                            wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, str(out_file),
+                            fps=fps, embed_audio=embed_audio, link_mode=link_mode, relative_locators=relative_locators
+                        )
+                        print(f"  Created: {output_filename}")
+                    processed += 1
+                    add_ale_row_from_wavmeta(wav_file, wav_metadata)
+                except Exception as e:
+                    print(f"  Error processing {wav_file.name}: {e}")
+
+        # Optionally write ALE
+        if emit_ale and ale_rows:
+            ale_path = output_path / 'batch.ale'
+            try:
+                with open(ale_path, 'w', encoding='utf-8') as f:
+                    f.write('Heading\n')
+                    f.write('FIELD_DELIM\tTABS\n')
+                    f.write('VIDEO_FORMAT\t1080\n')
+                    f.write('AUDIO_FORMAT\t48kHz\n')
+                    f.write(f'FPS\t{int(fps)}\n')
+                    f.write('\nColumn\n')
+                    cols = ['Name','Tracks','Start','End','Tape','Source File','AudioRate','SampleRate','Channels','Duration']
+                    f.write('\t'.join(cols)+'\n')
+                    f.write('Data\n')
+                    for r in ale_rows:
+                        f.write('\t'.join(r.get(c,'') for c in cols)+'\n')
+                print(f"  Wrote ALE: {ale_path}")
+            except Exception as e:
+                print(f"  Failed to write ALE: {e}")
+
+        # Write batch low-confidence report if present
+        if low_confidence_items:
+            try:
+                import csv
+                report_path = output_path / 'ucs_low_confidence.csv'
+                with open(report_path, 'w', newline='', encoding='utf-8') as rf:
+                    writer = csv.DictWriter(rf, fieldnames=['file','description','ucs_id','category','subcategory','score'])
+                    writer.writeheader()
+                    for row in low_confidence_items:
+                        writer.writerow(row)
+                print(f"  Wrote UCS low-confidence report: {report_path}")
+            except Exception as e:
+                print(f"  Failed to write UCS low-confidence report: {e}")
+
         print(f"\nCompleted! Processed {processed} file(s)")
         print(f"Output files saved to: {output_dir}")
         return 0
     
-    def process_single_file(self, wav_file: str, output_file: str) -> int:
+    def process_single_file(self, wav_file: str, output_file: str, fps: float = 24, embed_audio: bool = False,
+                            link_mode: str = 'import', relative_locators: bool = False,
+                            skip_log_path: Optional[str] = None, auto_skip_log: bool = False,
+                            allow_ucs_guess: bool = True) -> int:
         """Process a single WAV file"""
         try:
+            # Ensure output directory exists
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
             print(f"Processing: {wav_file}")
             
+            # Enforce WAV-only policy: check extension early and provide helpful error
+            ext = Path(wav_file).suffix.lower()
+            if ext not in self.extractor.supported_formats:
+                print(f"Error: Unsupported input format '{ext}'. This tool only supports WAV files (.wav, .wave).")
+                return 1
+
             # Extract metadata
             wav_metadata = self.extractor.extract_basic_info(wav_file)
             
@@ -959,9 +2145,11 @@ class WAVsToAAFProcessor:
                 print(f"XML metadata found: {list(xml_types)}")
             
             # UCS categorization
-            ucs_metadata = self.ucs_processor.categorize_sound(
+            ucs_metadata = self._resolve_ucs_metadata(
                 Path(wav_file).name,
-                bext_metadata.get('description', '')
+                bext_metadata.get('description', ''),
+                info_metadata, xml_metadata,
+                allow_guess=allow_ucs_guess
             )
             
             if ucs_metadata and 'primary_category' in ucs_metadata:
@@ -970,14 +2158,145 @@ class WAVsToAAFProcessor:
             
             # Generate AAF file
             output_file_path = self.generator.create_aaf_file(
-                wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, output_file
+                wav_metadata, bext_metadata, info_metadata, xml_metadata, ucs_metadata, output_file,
+                fps=fps, embed_audio=embed_audio, link_mode=link_mode, relative_locators=relative_locators
             )
             
             print(f"Created: {output_file}")
+            # If single-file and fuzzy match was low-confidence, write a tiny report near the output
+            try:
+                if allow_ucs_guess and ucs_metadata and 'primary_category' in ucs_metadata:
+                    score = float(ucs_metadata['primary_category'].get('score', 0.0))
+                    if 0 < score < getattr(self, '_ucs_min_score', 25.0):
+                        try:
+                            import csv
+                            report_path = output_path.parent / 'ucs_low_confidence.csv'
+                            with open(report_path, 'w', newline='', encoding='utf-8') as rf:
+                                writer = csv.DictWriter(rf, fieldnames=['file','description','ucs_id','category','subcategory','score'])
+                                writer.writeheader()
+                                writer.writerow({
+                                    'file': Path(wav_file).name,
+                                    'description': bext_metadata.get('description',''),
+                                    'ucs_id': ucs_metadata['primary_category'].get('id',''),
+                                    'category': ucs_metadata['primary_category'].get('category',''),
+                                    'subcategory': ucs_metadata['primary_category'].get('subcategory',''),
+                                    'score': score,
+                                })
+                            print(f"  Wrote UCS low-confidence report: {report_path}")
+                        except Exception as e:
+                            print(f"  Failed to write UCS low-confidence report: {e}")
+            except Exception:
+                pass
+
             return 0
-            
+
         except Exception as e:
             print(f"Error processing {wav_file}: {e}")
+            return 1
+
+    def _resolve_ucs_metadata(self, filename: str, description: str, info_metadata: Dict, xml_metadata: Dict, allow_guess: bool = True) -> Dict:
+        """Resolve UCS metadata for a file, preferring filename-ID exact matches, then INFO/iXML fields, then fuzzy UCS guessing.
+
+        Returns a ucs_metadata dict in the same shape as UCSProcessor.categorize_sound.
+        """
+        # 1) Exact filename-ID match handled by categorize_sound (it returns score 100)
+        res = self.ucs_processor.categorize_sound(filename, description, allow_guess=True)
+        if res and 'primary_category' in res and float(res['primary_category'].get('score', 0)) >= 100.0:
+            return res
+
+        # 2) Check INFO metadata (case-insensitive keys) for explicit Category/SubCategory/UCS ID
+        # Normalize keys to lower-case for lookup
+        info_norm = {k.strip().lower(): v for k, v in (info_metadata or {}).items()}
+        xml_norm = {k.strip().lower(): v for k, v in (xml_metadata or {}).items()}
+
+        # Helper to pick candidate values
+        def find_key(dct, possible_keys):
+            for pk in possible_keys:
+                if pk in dct and dct[pk]:
+                    return dct[pk]
+            return None
+
+        category = find_key(info_norm, ['category']) or find_key(xml_norm, [k for k in xml_norm.keys() if 'category' in k])
+        subcategory = find_key(info_norm, ['subcategory', 'sub category', 'sub_cat', 'sub_catagory']) or find_key(xml_norm, [k for k in xml_norm.keys() if 'subcategory' in k or 'sub category' in k])
+        ucsid = find_key(info_norm, ['ucs_id','ucs id','ucsid']) or find_key(xml_norm, ['ucs_id','ucs id','ucsid'])
+
+        if category or subcategory or ucsid:
+            # Use explicit metadata; mark score 100 to indicate authoritative source
+            full_name = f"{category or ''} {subcategory or ''}".strip()
+            return {
+                'primary_category': {
+                    'id': ucsid or '',
+                    'full_name': full_name or (ucsid or ''),
+                    'category': category or '',
+                    'subcategory': subcategory or '',
+                    'score': 100.0
+                }
+            }
+
+        # 3) Fallback to UCS guessing if allowed
+        if allow_guess:
+            return self.ucs_processor.categorize_sound(filename, description)
+
+        # No match
+        return {}
+            
+        
+
+    def process_files_to_one_aaf(self, wav_files: List[str], output_file: str, fps: float = 24,
+                                 embed_audio: bool = False, link_mode: str = 'import', tape_mode: bool = False,
+                                 allow_ucs_guess: bool = True) -> int:
+        """Process multiple WAV files into a single multi-clip AAF file."""
+        try:
+            # Ensure output directory exists
+            out_path = Path(output_file)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+            wav_entries = []
+            for wav_file in wav_files:
+                # Extract metadata
+                wav_metadata = self.extractor.extract_basic_info(wav_file)
+                if not wav_metadata:
+                    print(f"Skipping {wav_file}: cannot read metadata")
+                    continue
+
+                all_chunks = self.extractor.extract_all_metadata_chunks(wav_file)
+                bext_metadata = {k: v for k, v in all_chunks.items() if k in [
+                    'description', 'originator', 'originator_reference', 'origination_date', 
+                    'origination_time', 'time_reference', 'version', 'umid', 'loudness_value',
+                    'loudness_range', 'max_true_peak', 'max_momentary_loudness', 'max_short_term_loudness'
+                ]}
+                xml_prefixes = ['ebucore_', 'bwfmetaedit_', 'protools_', 'axml_', 'xml_']
+                xml_metadata = {k: v for k, v in all_chunks.items() if any(k.startswith(prefix) for prefix in xml_prefixes)}
+                used_keys = set(bext_metadata.keys()) | set(xml_metadata.keys())
+                info_metadata = {k: v for k, v in all_chunks.items() if k not in used_keys}
+
+                ucs_metadata = self.ucs_processor.categorize_sound(
+                        Path(wav_file).name,
+                        bext_metadata.get('description', ''),
+                        allow_guess=allow_ucs_guess
+                    )
+
+                wav_entries.append({
+                    'wav_metadata': wav_metadata,
+                    'bext_metadata': bext_metadata,
+                    'info_metadata': info_metadata,
+                    'xml_metadata': xml_metadata,
+                    'ucs_metadata': ucs_metadata,
+                })
+
+            if not wav_entries:
+                print("No valid WAV entries to process")
+                return 1
+
+            if tape_mode:
+                self.generator.create_multi_tape_aaf(wav_entries, output_file, fps=fps)
+                print(f"Created multi-clip tape AAF: {output_file}")
+            else:
+                self.generator.create_multi_aaf(wav_entries, output_file, fps=fps, embed_audio=embed_audio, link_mode=link_mode)
+                print(f"Created multi-clip AAF: {output_file}")
+            return 0
+        except Exception as e:
+            print(f"Error creating multi-clip AAF: {e}")
             return 1
 
 def main():
@@ -993,34 +2312,80 @@ def main():
     
     # Use argparse for command-line mode
     parser = argparse.ArgumentParser(
-        description="Convert WAV files to Advanced Authoring Format (AAF)",
+        description="Convert WAV files to Advanced Authoring Format (AAF). Embedded audio is the default; use --linked to reference external WAV files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s ./audio_files ./aaf_output    # Process directory
-  %(prog)s ./audio_files                 # Output to ./aaf_output
-  %(prog)s                               # Process current dir
-  %(prog)s -f input.wav output.aaf       # Process single file
+  %(prog)s ./audio_files ./aaf_output    # Process directory (embedded AAFs)
+  %(prog)s ./audio_files                 # Output to ./aaf_output (embedded)
+  %(prog)s                               # Process current dir (embedded)
+  %(prog)s -f input.wav output.aaf       # Process single file (embedded)
+  %(prog)s ./audio_files --linked        # Create linked AAFs referencing WAVs
+
+NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wave). Other audio formats are not supported.
         """
     )
     
-    parser.add_argument('input', nargs='?', default='.',
-                        help='Input directory or file (default: current directory)')
-    parser.add_argument('output', nargs='?', default='./aaf_output',
-                        help='Output directory or file (default: ./aaf_output)')
+    parser.add_argument('input', nargs='?', default=None,
+                        help='Input directory or file (if not provided, interactive mode is used)')
+    parser.add_argument('output', nargs='?', default=None,
+                        help='Output directory or file (if not provided, interactive mode is used)')
     parser.add_argument('-f', '--file', action='store_true',
                         help='Process single file instead of directory')
+    parser.add_argument('--emit-ale', action='store_true',
+                        help='Also write an ALE for batch importing in Media Composer (directory mode only)')
+    parser.add_argument('--one-aaf', action='store_true',
+                        help='In directory mode, write one AAF containing all clips instead of one-per-clip (only applies with --linked)')
+    # Embedded AAFs are now the default. Use --linked to create linked AAFs.
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument('--linked', action='store_true',
+                        help='Create linked AAFs (reference external files). Use when you prefer smaller AAFs that reference the original WAVs')
+    mode_group.add_argument('--embedded', action='store_true',
+                        help='(Default) Create embedded AAFs. Multi-channel WAVs will be split into per-channel mono embeds for best Avid compatibility')
+    parser.add_argument('--relative-locators', action='store_true',
+                        help='Use relative paths in locators (e.g., "./filename.wav") to eliminate locate prompts')
+    parser.add_argument('--link-mode', choices=['import','pcm'], default='import',
+                        help="Link style for linked AAFs: 'import' (ImportDescriptor chain) or 'pcm' (PCMDescriptor linked)")
+    parser.add_argument('--near-sources', action='store_true',
+                        help='Save per-clip AAFs next to their source WAV files')
+    parser.add_argument('--tape-mode', action='store_true',
+                        help='Use TapeDescriptor structure (like ALE-exported AAFs) instead of ImportDescriptor')
     parser.add_argument('-v', '--version', action='version',
                         version=f'WAVsToAAF {__version__}')
+
+    parser.add_argument('--ucs-exact', action='store_true',
+                        help='Only use exact UCS ID filename matches (disable fuzzy UCS guessing).')
+    parser.add_argument('--ucs-min-score', type=float, default=25.0,
+                        help='Score threshold under which fuzzy UCS matches will be recorded to a low-confidence report (default: 25.0)')
     
+    # Note: WAVsToAAF intentionally only supports PCM WAV files (.wav, .wave).
+    # Other audio formats (AIFF, MP3, FLAC, etc.) are not supported by design.
     args = parser.parse_args()
     
+    # If no input/output provided, use interactive mode
+    if args.input is None or args.output is None:
+        return interactive_mode()
+    
+    # Default to embedded AAFs. If user explicitly provided --linked, use linked.
+    embed_audio = True if not args.linked else False
+
+    # UCS matching mode: default allows fuzzy guessing; --ucs-exact restricts to exact-ID filename matches only
+    allow_ucs_guess = not getattr(args, 'ucs_exact', False)
+    
     processor = WAVsToAAFProcessor()
+    # configure processor with UCS low confidence threshold
+    processor._ucs_min_score = float(getattr(args, 'ucs_min_score', 25.0))
     
     if args.file:
-        return processor.process_single_file(args.input, args.output)
+        return processor.process_single_file(args.input, args.output, embed_audio=embed_audio,
+                                           link_mode=args.link_mode, relative_locators=args.relative_locators,
+                                           allow_ucs_guess=allow_ucs_guess)
     else:
-        return processor.process_directory(args.input, args.output)
+        return processor.process_directory(args.input, args.output, embed_audio=embed_audio,
+                                          link_mode=args.link_mode, emit_ale=args.emit_ale, 
+                                          one_aaf=args.one_aaf, near_sources=args.near_sources, 
+                                          tape_mode=args.tape_mode, relative_locators=args.relative_locators,
+                                          allow_ucs_guess=allow_ucs_guess)
 
 def interactive_mode() -> int:
     """Interactive mode for user-friendly input prompting"""

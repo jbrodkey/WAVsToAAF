@@ -1,0 +1,36 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# DMG packaging (staging + outputs)
+DMG_/
+DMG_Contents_STAGING/
+*.dmg
+
+# PyInstaller internals and packaging byproducts
+*.pkg
+*.toc
+base_library.zip
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# macOS metadata
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

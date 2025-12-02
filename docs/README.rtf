@@ -1,0 +1,195 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\froman\fcharset0 TimesNewRomanPS-BoldMT;\f1\froman\fcharset0 TimesNewRomanPSMT;\f2\froman\fcharset0 TimesNewRomanPS-ItalicMT;\f3\fmodern\fcharset0 CourierNewPSMT;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\vieww12000\viewh15840\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\b\fs36 \cf0 WAVsToAAF \u8211  Quick Start
+\fs32 \
+
+\f1\b0\fs24 \pard\pardeftab720\partightenfactor0
+\cf0 Version: v1.0.0\
+\
+
+\f0\b\fs28 Overview\
+
+\f1\b0\fs24 \
+WAVsToAAF scans your WAVs, extracts production metadata (BEXT, RIFF LIST-INFO, embedded XML), auto-tags with UCS categories, and builds real AAFs. Use linked media for lightweight bins and easy relink, or embed audio for self-contained handoffs \u8211  your choice per run.\
+\
+
+\f0\b\fs28 Opening WAVsToAAF on a Mac (macOS) \
+
+\f1\b0\fs24 \
+If you see a security warning: \
+
+\f2\i "App can\u8217 t be opened because it is from an unidentified developer."
+\f1\i0  \
+OR \
+
+\f2\i "Apple could not verify..."
+\f1\i0 \
+\
+You'll need to:\
+\pard\pardeftab720\li720\fi-360\partightenfactor0
+\cf0 1.\tab Open 
+\f0\b System Settings
+\f1\b0  > 
+\f0\b Privacy & Security
+\f1\b0 \
+2.\tab Scroll down to 
+\f0\b Security
+\f1\b0 \
+3.\tab At the line for 
+\f0\b WAVsToAAF
+\f1\b0  choose: 
+\f0\b Open Anyway
+\f1\b0 \
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\
+
+\f0\b\fs28 What\u8217 s in the box\
+
+\f1\b0\fs24 \
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+\cf0 \'95\tab Real AAFs via pyaaf2 (no XML intermediates)\
+\'95\tab GUI and CLI workflows\
+\'95\tab Linked vs Embedded AAFs (toggle)\
+\'95\tab Relink-friendly with NetworkLocator file URLs\
+\'95\tab 9 frame rates with normalization (23.98 \u8594  23.976)\
+\'95\tab BEXT, LIST-INFO, XML ingestion; UCS auto-categorization\
+\'95\tab Single-file or batch folders\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\
+
+\f0\b\fs28 WAVsToAAF \u8211  How to Use\
+
+\f1\b0\fs24 \
+
+\f0\b 1. Select Input\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab 
+\f0\b Single WAV
+\f1\b0 : Click 
+\f0\b "File..."
+\f1\b0  and choose a single 
+\f3 .wav
+\f1  file\
+\'95\tab 
+\f0\b Folder of WAVs
+\f1\b0 : Click 
+\f0\b "Folder..."
+\f1\b0  and choose a directory that contains WAV files (subfolders supported). The app writes one AAF per WAV.\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b 2. Select Output Folder (optional)\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab Click 
+\f0\b "Browse..."
+\f1\b0  to choose where AAF files will be written\
+\'95\tab If you leave this blank the app will create an 
+\f0\b AAFs
+\f1\b0  folder next to your WAV directory and write AAFs there\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b 3. Set FPS (frames per second)\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab Default is 
+\f0\b 24
+\f1\b0 . Choose from: 23.98, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60\
+\'95\tab 23.98 is normalized internally to 23.976\
+\'95\tab Timecode fields include a StartTC_{fps}fps comment (e.g., StartTC_29_97fps)\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b 4. Audio Mode: Linked vs Embedded\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab Unchecked (default): Linked AAFs reference original WAVs via NetworkLocator \u8211  small bins, fast relink\
+\'95\tab Checked: Embedded AAFs are self-contained; portable but larger\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b 5. Run Conversion\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab Click 
+\f0\b "Run"
+\f1\b0  \u8211  The app processes WAV files, extracts metadata (WAV header, BEXT, embedded XML, LIST/INFO, and UCS filename mapping), and writes AAF(s)\
+\'95\tab A log pane displays progress and any skips/errors\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b 6. Open Output\
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+
+\f1\b0 \cf0 \'95\tab After a successful run, click 
+\f0\b "Open AAF Location"
+\f1\b0  to reveal the created AAF(s)\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b\fs28 What gets written\
+\pard\pardeftab720\partightenfactor0
+
+\f1\b0\fs24 \cf0 \'95\tab 
+\f0\b AAF structure
+\f1\b0 : MasterMob with comments; SourceMob with WAVE Descriptor; timeline slots sized to audio length; for linked mode, a NetworkLocator to the WAV file URL\
+\'95\tab 
+\f0\b Technicals
+\f1\b0 : SampleRate, BitDepth, Channels, Number of Frames, Duration; Start/End timecode at selected FPS; track labels (A1, A1A2, A1A{n})\
+\'95\tab 
+\f0\b BEXT (if present)
+\f1\b0 : Description, Originator, OriginatorReference, Origination Date/Time, Time Reference, UMID, Loudness\
+\'95\tab 
+\f0\b LIST-INFO (if present)
+\f1\b0 : IART, ICMT, ICOP, ICRD, IENG, IGNR, IKEY, INAM, IPRD, ISBJ, ISFT, ISRC\
+\'95\tab 
+\f0\b XML (if present)
+\f1\b0 : Keys from EBU Core, BWF MetaEdit, Pro Tools, or generic XML surfaced with prefixes (ebucore_, bwfmetaedit_, protools_, axml_, xml_)\
+\'95\tab 
+\f0\b UCS categorization
+\f1\b0 : Primary category (Category, SubCategory, ID, Full Name) and match score\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b\fs28 Examples\
+\pard\pardeftab720\partightenfactor0
+
+\f1\b0\fs24 \cf0 Create linked AAFs for a folder at 29.97 fps:\
+\pard\pardeftab720\li720\fi-720\partightenfactor0
+
+\f3 \cf0 python3 wav_to_aaf.py ./FX ./AAF --fps 29.97\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f1 Create an embedded AAF for a single file at 23.976:\
+\pard\pardeftab720\li720\fi-720\partightenfactor0
+
+\f3 \cf0 python3 wav_to_aaf.py -f "Some File.wav" "Some File.aaf" --fps 23.976 --embed\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b\fs28 Compatibility\
+
+\f1\b0\fs24 \
+\pard\pardeftab720\li360\fi-180\partightenfactor0
+\cf0 \'95\tab Python: 3.8+\
+\'95\tab Platforms: macOS, Windows, Linux\
+\'95\tab WAV: PCM WAV (.wav, .wave)\
+\'95\tab NLEs/DAWs: Avid Media Composer, Pro Tools, and other AAF-capable apps\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+
+\f0\b\fs28 Support\
+
+\f1\b0\fs24 \
+Questions or feature requests? Reach out via your usual channel.\
+}
