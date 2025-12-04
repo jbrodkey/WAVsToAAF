@@ -1980,7 +1980,17 @@ class WAVsToAAFProcessor:
                           allow_ucs_guess: bool = True) -> int:
         """Process all WAV files in a directory"""
         input_path = Path(input_dir)
-        output_path = Path(output_dir)
+        
+        # Determine the base output directory
+        if not near_sources and output_dir:
+            # When output_dir is provided but not near_sources, use it as-is
+            output_path = Path(output_dir)
+        elif not near_sources and not output_dir:
+            # When no output_dir and not near_sources, create AAFs directory one level above input
+            output_path = input_path.parent / 'AAFs'
+        else:
+            # When near_sources is True, we'll save next to each WAV
+            output_path = Path(output_dir) if output_dir else input_path.parent / 'AAFs'
 
         if not input_path.exists():
             print(f"Error: Input directory '{input_dir}' does not exist")
@@ -2152,8 +2162,17 @@ class WAVsToAAFProcessor:
                         out_file = wav_file.parent / output_filename
                         print(f"  Saving near source: {out_file}")
                     else:
-                        # Save AAF in the output directory
-                        out_file = output_path / output_filename
+                        # Mirror the subdirectory structure within the output directory
+                        # Calculate relative path from input_path to wav_file
+                        try:
+                            rel_dir = wav_file.parent.relative_to(input_path)
+                            out_dir = output_path / rel_dir
+                        except ValueError:
+                            # Fallback if relative path calculation fails
+                            out_dir = output_path
+                        
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        out_file = out_dir / output_filename
                     
                     # Choose AAF generation method based on tape_mode flag
                     if tape_mode:
@@ -2208,7 +2227,7 @@ class WAVsToAAFProcessor:
                 print(f"  Failed to write UCS low-confidence report: {e}")
 
         print(f"\nCompleted! Processed {processed} file(s)")
-        print(f"Output files saved to: {output_dir}")
+        print(f"Output files saved to: {output_path}")
         return 0
     
     def process_single_file(self, wav_file: str, output_file: str, fps: float = 24, embed_audio: bool = False,
