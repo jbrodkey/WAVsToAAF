@@ -2503,6 +2503,14 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
     if args.input is None or args.output is None:
         return interactive_mode()
     
+    # For single file processing, auto-generate output path if not provided
+    output_path = args.output
+    if args.file and output_path is None:
+        # Create AAFs subdirectory in the same directory as the WAV
+        input_dir = os.path.dirname(args.input)
+        aaf_dir = os.path.join(input_dir, 'AAFs')
+        output_path = os.path.join(aaf_dir, os.path.splitext(os.path.basename(args.input))[0] + '.aaf')
+    
     # Default to embedded AAFs. If user explicitly provided --linked, use linked.
     embed_audio = True if not args.linked else False
 
@@ -2514,11 +2522,11 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
     processor._ucs_min_score = float(getattr(args, 'ucs_min_score', 25.0))
     
     if args.file:
-        return processor.process_single_file(args.input, args.output, embed_audio=embed_audio,
+        return processor.process_single_file(args.input, output_path, embed_audio=embed_audio,
                                            link_mode=args.link_mode, relative_locators=args.relative_locators,
                                            allow_ucs_guess=allow_ucs_guess)
     else:
-        return processor.process_directory(args.input, args.output, embed_audio=embed_audio,
+        return processor.process_directory(args.input, output_path, embed_audio=embed_audio,
                                           link_mode=args.link_mode, emit_ale=args.emit_ale, 
                                           one_aaf=args.one_aaf, near_sources=args.near_sources, 
                                           tape_mode=args.tape_mode, relative_locators=args.relative_locators,
@@ -2551,7 +2559,10 @@ def interactive_mode() -> int:
     
     # Prompt for output path
     if is_single_file:
-        default_output = os.path.splitext(input_path)[0] + '.aaf'
+        # Create AAFs subdirectory in the same directory as the WAV
+        input_dir = os.path.dirname(input_path)
+        aaf_dir = os.path.join(input_dir, 'AAFs')
+        default_output = os.path.join(aaf_dir, os.path.splitext(os.path.basename(input_path))[0] + '.aaf')
         raw_output = input(f"Enter the output AAF file path (RETURN for '{default_output}'): ").strip()
         output_path = sanitize_path(raw_output) if raw_output else default_output
     else:
