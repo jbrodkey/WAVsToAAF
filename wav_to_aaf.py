@@ -2606,6 +2606,11 @@ def launch_gui():
         log_text.configure(state='normal')
         log_text.delete('1.0', 'end')
         log_text.configure(state='disabled')
+        # Also hide the Open AAF Location button
+        try:
+            open_btn.pack_forget()
+        except Exception:
+            pass
 
     def open_output_location():
         # If the user set an Output Folder, prioritize opening that location
