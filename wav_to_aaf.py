@@ -54,8 +54,8 @@ import aaf2.auid
 import aaf2.rational
 import aaf2.misc
 
-__version__ = "2.0.0"
-__author__ = "Jason Brodkey"
+# Import version from _version.py
+from _version import __version__, __author__
 
 # AAF Pan Control AUIDs
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
