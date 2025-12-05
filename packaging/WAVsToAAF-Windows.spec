@@ -9,7 +9,7 @@ datas = [
 
 a = Analysis(
     ['packaging/gui_launcher.py'],
-    pathex=['.', '..'],
+    pathex=['.'],
     binaries=[],
     datas=datas,
     hiddenimports=[
