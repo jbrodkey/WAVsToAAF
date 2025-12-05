@@ -6,45 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    name: build-macos
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.14'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          python -m pip install pyinstaller
-
-      - name: Clean previous builds
-        run: |
-          rm -rf dist build *.spec
-
-      - name: Build app (PyInstaller using spec file)
-        run: |
-          cd packaging
-          chmod +x build.sh
-          ./build.sh
-
-      - name: Archive build
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-app
-          path: dist/WAVsToAAF.app
-
-      - name: Validate macOS app bundle
-        run: |
-          chmod +x validate_bundle.sh
-          ./validate_bundle.sh
-
   build-windows:
     name: build-windows
     runs-on: windows-latest
@@ -67,7 +28,6 @@ jobs:
         run: |
           if exist dist rmdir /s /q dist
           if exist build rmdir /s /q build
-          if exist *.spec del /q *.spec
 
       - name: Syntax check
         run: |
@@ -75,29 +35,26 @@ jobs:
 
       - name: Build exe (PyInstaller using spec file)
         run: |
-          pyinstaller packaging\WAVsToAAF-Windows.spec
-
-      - name: Archive build
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-exe
-          path: dist\WAVsToAAF\WAVsToAAF.exe
+          pyinstaller packaging/WAVsToAAF-Windows.spec
 
       - name: Create distribution package (zip)
         shell: pwsh
         run: |
-          Set-StrictMode -Version Latest
           cd dist
-          # The spec file creates dist\WAVsToAAF\ folder with exe and data
-          # Zip the folder
           Compress-Archive -Path 'WAVsToAAF' -DestinationPath 'WAVsToAAF-Windows-v1.0.0.zip'
-          Get-ChildItem
+          ls -la
 
-      - name: Upload distribution package
+      - name: Upload zip package
         uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: dist\WAVsToAAF-Windows-v1.0.0.zip
+          path: dist/WAVsToAAF-Windows-v1.0.0.zip
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/WAVsToAAF/WAVsToAAF.exe
 
       - name: Validate Windows build
         shell: cmd
