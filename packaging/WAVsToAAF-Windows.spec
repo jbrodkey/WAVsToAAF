@@ -1,15 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+
+# Get the directory containing this spec file
+spec_dir = os.path.dirname(os.path.abspath(SPEC))
+# Get the parent directory (WAVsToAAF root)
+root_dir = os.path.dirname(spec_dir)
 
 # Bundle data files and main scripts for Windows
 datas = [
-    ('data', 'data'),
-    ('wav_to_aaf.py', '.'),
-    ('_version.py', '.'),
+    (os.path.join(root_dir, 'data'), 'data'),
+    (os.path.join(root_dir, 'wav_to_aaf.py'), '.'),
+    (os.path.join(root_dir, '_version.py'), '.'),
 ]
 
 a = Analysis(
-    ['packaging/gui_launcher.py'],
-    pathex=['.'],
+    [os.path.join(spec_dir, 'gui_launcher.py')],
+    pathex=[root_dir],
     binaries=[],
     datas=datas,
     hiddenimports=[
