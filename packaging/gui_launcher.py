@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """
-WAVsToAAF GUI Launcher
-Launches the GUI mode of WAVsToAAF
+WAVsToAAF GUI Launcher for PyInstaller
+This imports the main wav_to_aaf module so PyInstaller can analyze all dependencies
 """
 
 import sys
-import os
 
-# Add the script directory to sys.path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, script_dir)
-
-from wav_to_aaf import launch_gui
+# Import main module - PyInstaller will trace all dependencies from here
+import wav_to_aaf
 
 if __name__ == "__main__":
-    launch_gui()
+    wav_to_aaf.launch_gui()
