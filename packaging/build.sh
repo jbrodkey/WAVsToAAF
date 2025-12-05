@@ -11,7 +11,7 @@ PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJ_DIR"
 
 APP_NAME="WAVsToAAF"
-ENTRY="wav_to_aaf_gui.py"
+ENTRY="$SCRIPT_DIR/gui_launcher.py"
 DIST_DIR="$PROJ_DIR/dist"
 BUILD_DIR="$PROJ_DIR/build"
 
@@ -41,6 +41,7 @@ pyinstaller \
   --windowed \
   --name "$APP_NAME" \
   --hidden-import wav_to_aaf \
+  --hidden-import _version \
   --hidden-import aaf2 \
   ${ICON_FLAG[@]+"${ICON_FLAG[@]}"} \
   "${ADD_DATA[@]}" \
