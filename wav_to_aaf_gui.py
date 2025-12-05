@@ -135,9 +135,11 @@ def launch_gui():
         # Set default output if not specified
         if not outp:
             if os.path.isfile(wavp):
-                outp = os.path.join(os.path.dirname(wavp), "aaf_output")
+                # Single file: output to AAFs subdirectory in same directory as WAV
+                outp = os.path.join(os.path.dirname(wavp), "AAFs", os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
             else:
-                outp = os.path.join(wavp, "aaf_output")
+                # Directory: output to AAFs directory one level above input
+                outp = None  # Will use default behavior in process_directory
 
         # Run in a thread to keep UI responsive
         cancel_event.clear()
@@ -238,9 +240,9 @@ def launch_gui():
         # Fallback: open expected folder based on inputs
         try:
             if os.path.isfile(wavp):
-                folder = os.path.join(os.path.dirname(wavp), 'aaf_output')
+                folder = os.path.join(os.path.dirname(wavp), 'AAFs')
             else:
-                folder = os.path.join(wavp, 'aaf_output')
+                folder = os.path.join(os.path.dirname(wavp), 'AAFs')
             if sys.platform == 'darwin':
                 subprocess.run(['open', folder], check=False)
             elif sys.platform == 'win32':

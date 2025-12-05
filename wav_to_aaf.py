@@ -2566,13 +2566,14 @@ def interactive_mode() -> int:
         raw_output = input(f"Enter the output AAF file path (RETURN for '{default_output}'): ").strip()
         output_path = sanitize_path(raw_output) if raw_output else default_output
     else:
-        default_output = os.path.join(os.path.dirname(input_path), 'aaf_output')
+        # For directories, default to None to let process_directory use its built-in logic (AAFs one level above)
+        default_output = "None (will create AAFs directory one level above input)"
         raw_output = input(f"Enter the output directory (RETURN for '{default_output}'): ").strip()
-        output_path = sanitize_path(raw_output) if raw_output else default_output
+        output_path = sanitize_path(raw_output) if raw_output else None
     
     print()
     print(f"Input: {input_path}")
-    print(f"Output: {output_path}")
+    print(f"Output: {output_path if output_path else 'Will be auto-generated'}")
     print()
     
     # Process the files
