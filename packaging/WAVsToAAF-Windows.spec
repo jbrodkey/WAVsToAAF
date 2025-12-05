@@ -64,7 +64,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icons/win/WAVsToAAF.ico',
+    icon=os.path.join(root_dir, 'icons', 'win', 'WAVsToAAF.ico'),
 )
 
 coll = COLLECT(
