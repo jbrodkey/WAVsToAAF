@@ -18,17 +18,5 @@ IF NOT EXIST "dist\WAVsToAAF\data" (
 )
 
 REM 3. Attempt to launch the app (headless)
-start "WAVsToAAF" /B "%EXE_PATH%"
-REM Wait a moment and check if process started
-ping 127.0.0.1 -n 3 > nul
-REM Check if process is running
-for /f "tokens=2" %%a in ('tasklist /FI "IMAGENAME eq WAVsToAAF.exe" /NH') do (
-    if "%%a" NEQ "" (
-        echo App launched successfully (PID: %%a)
-        taskkill /F /PID %%a
-    ) else (
-        echo Warning: App did not launch (may require GUI).
-    )
-)
-
+echo Skipping app launch test - requires GUI environment
 echo Validation complete.
