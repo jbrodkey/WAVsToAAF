@@ -1,4 +1,4 @@
-name: Build WAVsToAAF
+name: Build WAVsToAAF Windows
 
 on:
   push:
