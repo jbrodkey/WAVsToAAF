@@ -2499,8 +2499,8 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
     # Other audio formats (AIFF, MP3, FLAC, etc.) are not supported by design.
     args = parser.parse_args()
     
-    # If no input/output provided, use interactive mode
-    if args.input is None or args.output is None:
+    # If no input provided, use interactive mode
+    if args.input is None:
         return interactive_mode()
     
     # For single file processing, auto-generate output path if not provided
