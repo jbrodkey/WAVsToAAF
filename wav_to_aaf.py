@@ -2459,6 +2459,7 @@ def launch_gui():
     out_var = tk.StringVar()
     fps_var = tk.StringVar(value="24")
     embed_var = tk.BooleanVar(value=True)
+    infer_ucs_var = tk.BooleanVar(value=True)
     last_outputs = {'paths': []}
     cancel_event = threading.Event()
     processor = WAVsToAAFProcessor()
@@ -2523,6 +2524,7 @@ def launch_gui():
         
         # Get options
         embed_audio = embed_var.get()
+        allow_ucs_guess = infer_ucs_var.get()
         write_skip_log = True  # Always on by default
 
         wavp = wav_var.get().strip() or None
@@ -2560,14 +2562,14 @@ def launch_gui():
                     # Single file mode - outp is already the full AAF file path
                     result = processor.process_single_file(
                         wavp, outp, fps=fps, embed_audio=embed_audio,
-                        auto_skip_log=write_skip_log
+                        auto_skip_log=write_skip_log, allow_ucs_guess=allow_ucs_guess
                     )
                     ok = (result == 0)
                 else:
                     # Directory mode - outp is None, will use default AAFs logic
                     result = processor.process_directory(
                         wavp, outp, fps=fps, embed_audio=embed_audio,
-                        auto_skip_log=write_skip_log
+                        auto_skip_log=write_skip_log, allow_ucs_guess=allow_ucs_guess
                     )
                     ok = (result == 0)
             except Exception as e:
@@ -2678,7 +2680,10 @@ def launch_gui():
     ttk.Label(fps_row, text="(default 24)").pack(side='left', padx=(6, 0))
     
     # Embed audio checkbox (embedded is default)
-    ttk.Checkbutton(frm, text="Embed audio in AAF (default)", variable=embed_var).grid(row=5, column=0, columnspan=3, sticky='w', pady=(0, 8))
+    ttk.Checkbutton(frm, text="Embed audio in AAF (default)", variable=embed_var).grid(row=5, column=0, columnspan=3, sticky='w', pady=(0, 2))
+    
+    # UCS inference checkbox
+    ttk.Checkbutton(frm, text="Infer UCS category/subcategory if filename lacks a UCS ID", variable=infer_ucs_var).grid(row=5, column=0, columnspan=3, sticky='w', pady=(2, 8))
 
     # Action buttons
     buttons_row = ttk.Frame(frm)
