@@ -1,7 +1,7 @@
 @echo off
 REM Automated validation script for WAVsToAAF Windows build
 
-SET EXE_PATH=dist\WAVsToAAF\WAVsToAAF.exe
+SET EXE_PATH=dist\WAVsToAAF.exe
 
 REM 1. Check if executable exists
 IF NOT EXIST "%EXE_PATH%" (
@@ -10,13 +10,9 @@ IF NOT EXIST "%EXE_PATH%" (
 )
 echo Executable found: %EXE_PATH%
 
-REM 2. Check if data folder exists
-IF NOT EXIST "dist\WAVsToAAF\data" (
-    echo Warning: Data folder not found in distribution folder.
-) ELSE (
-    echo Data folder found in distribution folder.
+REM 2. Check file size (should be substantial for a bundled app)
+FOR %%A IN ("%EXE_PATH%") DO (
+    echo File size: %%~zA bytes
 )
 
-REM 3. Attempt to launch the app (headless)
-echo Skipping app launch test - requires GUI environment
 echo Validation complete.

@@ -66,13 +66,3 @@ exe = EXE(
     entitlements_file=None,
     icon=os.path.join(root_dir, 'icons', 'win', 'WAVsToAAF.ico'),
 )
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='WAVsToAAF',
-)
