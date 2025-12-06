@@ -2557,6 +2557,7 @@ def launch_gui():
                 except Exception:
                     pass
                 outp = os.path.join(out_folder, os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
+                log(f"Output will be: {outp}")
         else:
             # Directory mode - outp can be None (will use default AAFs logic) or a directory path
             if outp and not os.path.isdir(outp):
@@ -2583,10 +2584,10 @@ def launch_gui():
                         wavp, outp, fps=fps, embed_audio=embed_audio,
                         auto_skip_log=write_skip_log, allow_ucs_guess=allow_ucs_guess
                     )
-                    # Explicitly track the output file path
-                    if ok := (result == 0) and outp:
+                    ok = (result == 0)
+                    # Explicitly track the output file path after successful processing
+                    if ok and outp:
                         last_outputs['paths'].append(outp)
-                        log(f"Created: {outp}")
                 else:
                     # Directory mode - outp is None, will use default AAFs logic
                     result = processor.process_directory(
