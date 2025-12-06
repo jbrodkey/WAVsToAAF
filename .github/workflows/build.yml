@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           cd dist
-          Compress-Archive -Path 'WAVsToAAF' -DestinationPath 'WAVsToAAF-Windows-v1.0.0.zip'
+          Compress-Archive -Path 'WAVsToAAF.exe' -DestinationPath 'WAVsToAAF-Windows-v1.0.0.zip'
           ls -la
 
       - name: Upload zip package
@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: dist/WAVsToAAF/WAVsToAAF.exe
+          path: dist/WAVsToAAF.exe
 
       - name: Validate Windows build
         shell: cmd
