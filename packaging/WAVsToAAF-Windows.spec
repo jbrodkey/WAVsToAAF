@@ -11,6 +11,7 @@ datas = [
     (os.path.join(root_dir, 'data'), 'data'),
     (os.path.join(root_dir, 'wav_to_aaf.py'), '.'),
     (os.path.join(root_dir, '_version.py'), '.'),
+    (os.path.join(root_dir, 'icons', 'win', 'WAVsToAAF.ico'), 'icons'),
 ]
 
 a = Analysis(

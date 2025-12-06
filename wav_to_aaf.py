@@ -2453,6 +2453,16 @@ def launch_gui():
     root = tk.Tk()
     root.title("WAVsToAAF")
     root.geometry("680x520")
+    
+    # Set window icon for taskbar and title bar
+    try:
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle
+            icon_path = os.path.join(sys._MEIPASS, 'icons', 'WAVsToAAF.ico')
+            if os.path.exists(icon_path):
+                root.iconbitmap(icon_path)
+    except Exception:
+        pass
 
     # Variables
     wav_var = tk.StringVar()
