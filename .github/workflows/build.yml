@@ -54,10 +54,13 @@ jobs:
       - name: Create distribution package (zip)
         shell: pwsh
         run: |
-          cd dist
           $version = "${{ steps.get_version.outputs.version }}"
-          Copy-Item ../docs/README_windows.md README_windows.md
-          Compress-Archive -Path 'WAVsToAAF.exe','README_windows.md' -DestinationPath "WAVsToAAF_v$version.zip"
+          $folderName = "WAVsToAAF_v$version"
+          New-Item -ItemType Directory -Path "dist/$folderName" -Force
+          Copy-Item dist/WAVsToAAF.exe "dist/$folderName/"
+          Copy-Item docs/README_windows.md "dist/$folderName/"
+          cd dist
+          Compress-Archive -Path $folderName -DestinationPath "$folderName.zip"
           Get-ChildItem -Force
 
       - name: Upload zip package
