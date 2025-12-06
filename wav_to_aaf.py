@@ -2646,7 +2646,6 @@ def launch_gui():
                     folder = os.path.normpath(os.path.dirname(target))
                 else:
                     folder = os.path.dirname(target)
-                log(f"Opening location: {folder}")
                 if sys.platform == 'darwin':
                     subprocess.run(['open', folder], check=False)
                 elif sys.platform == 'win32':
@@ -2654,8 +2653,7 @@ def launch_gui():
                 else:
                     subprocess.run(['xdg-open', folder], check=False)
                 return
-            except Exception as e:
-                log(f"Failed to open: {e}")
+            except Exception:
                 pass
         
         # Fallback: check if the user set an Output Folder
@@ -2664,7 +2662,6 @@ def launch_gui():
         if outp:
             try:
                 folder = outp if os.path.isdir(outp) else os.path.dirname(outp)
-                log(f"Opening output folder: {folder}")
                 if sys.platform == 'darwin':
                     subprocess.run(['open', folder], check=False)
                 elif sys.platform == 'win32':
@@ -2672,8 +2669,7 @@ def launch_gui():
                 else:
                     subprocess.run(['xdg-open', folder], check=False)
                 return
-            except Exception as e:
-                log(f"Failed to open: {e}")
+            except Exception:
                 pass
         
         # Last resort fallback: open expected folder based on inputs
@@ -2685,7 +2681,6 @@ def launch_gui():
                 # Directory case: use the parent directory's AAFs
                 folder = os.path.join(os.path.dirname(wavp), 'AAFs')
             
-            log(f"Opening fallback folder: {folder}")
             if os.path.isdir(folder):
                 if sys.platform == 'darwin':
                     subprocess.run(['open', folder], check=False)
@@ -2694,10 +2689,8 @@ def launch_gui():
                 else:
                     subprocess.run(['xdg-open', folder], check=False)
             else:
-                log(f"Folder does not exist: {folder}")
                 messagebox.showwarning("Open Location", f"AAF folder not found: {folder}")
         except Exception as e:
-            log(f"Failed to open location: {e}")
             messagebox.showwarning("Open Location", f"Could not open the AAF location: {e}")
 
     # Layout - use ttk.Frame like ALE
