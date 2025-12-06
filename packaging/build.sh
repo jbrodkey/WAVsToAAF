@@ -24,6 +24,30 @@ pyinstaller WAVsToAAF.spec
 # Check if build succeeded
 if [ -d "dist/WAVsToAAF.app" ]; then
     echo "✓ Build complete! WAVsToAAF.app is ready at dist/WAVsToAAF.app"
+    
+    # Validate the app
+    echo ""
+    echo "Validating build..."
+    APP_PATH="dist/WAVsToAAF.app"
+    EXECUTABLE="$APP_PATH/Contents/MacOS/WAVsToAAF"
+    
+    if [ -f "$EXECUTABLE" ]; then
+        echo "✓ Executable found"
+        if [ -x "$EXECUTABLE" ]; then
+            echo "✓ Executable is runnable"
+            FILE_SIZE=$(du -sh "$APP_PATH" | cut -f1)
+            echo "✓ App bundle size: $FILE_SIZE"
+        else
+            echo "✗ Executable is not runnable"
+            exit 1
+        fi
+    else
+        echo "✗ Executable not found at $EXECUTABLE"
+        exit 1
+    fi
+    
+    echo ""
+    echo "✓ Build validation passed!"
 else
     echo "✗ Build failed or app not found in dist/"
     exit 1
