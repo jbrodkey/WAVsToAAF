@@ -2544,14 +2544,23 @@ def launch_gui():
             messagebox.showerror("Missing input", "Please select a WAV file or directory.")
             return
 
-        # Set default output if not specified
-        if not outp:
-            if os.path.isfile(wavp):
-                # Single file: output to AAFs subdirectory in same directory as WAV
-                outp = os.path.join(os.path.dirname(wavp), "AAFs", os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
-            else:
-                # Directory: output to AAFs directory one level above input
-                outp = None  # Will use default behavior in process_directory
+        # Set default output if not specified or if it's just a directory for single file mode
+        is_single_file = os.path.isfile(wavp)
+        if is_single_file:
+            # For single file processing
+            if not outp or os.path.isdir(outp):
+                # Generate full output path if not specified or only folder specified
+                out_folder = outp if (outp and os.path.isdir(outp)) else os.path.join(os.path.dirname(wavp), "AAFs")
+                # Create output folder if it doesn't exist
+                try:
+                    os.makedirs(out_folder, exist_ok=True)
+                except Exception:
+                    pass
+                outp = os.path.join(out_folder, os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
+        else:
+            # Directory mode - outp can be None (will use default AAFs logic) or a directory path
+            if outp and not os.path.isdir(outp):
+                outp = None  # Invalid output path, ignore it
 
         # Run in a thread to keep UI responsive
         cancel_event.clear()
@@ -2574,7 +2583,10 @@ def launch_gui():
                         wavp, outp, fps=fps, embed_audio=embed_audio,
                         auto_skip_log=write_skip_log, allow_ucs_guess=allow_ucs_guess
                     )
-                    ok = (result == 0)
+                    # Explicitly track the output file path
+                    if ok := (result == 0) and outp:
+                        last_outputs['paths'].append(outp)
+                        log(f"Created: {outp}")
                 else:
                     # Directory mode - outp is None, will use default AAFs logic
                     result = processor.process_directory(
@@ -2655,17 +2667,23 @@ def launch_gui():
         # Fallback: open expected folder based on inputs
         try:
             if os.path.isfile(wavp):
+                # Single file case: default output is AAFs subdirectory
                 folder = os.path.join(os.path.dirname(wavp), 'AAFs')
             else:
+                # Directory case: use the parent directory's AAFs
                 folder = os.path.join(os.path.dirname(wavp), 'AAFs')
-            if sys.platform == 'darwin':
-                subprocess.run(['open', folder], check=False)
-            elif sys.platform == 'win32':
-                os.startfile(folder)
+            
+            if os.path.isdir(folder):
+                if sys.platform == 'darwin':
+                    subprocess.run(['open', folder], check=False)
+                elif sys.platform == 'win32':
+                    os.startfile(folder)
+                else:
+                    subprocess.run(['xdg-open', folder], check=False)
             else:
-                subprocess.run(['xdg-open', folder], check=False)
-        except Exception:
-            messagebox.showwarning("Open Location", "Could not open the AAF location.")
+                messagebox.showwarning("Open Location", f"AAF folder not found: {folder}")
+        except Exception as e:
+            messagebox.showwarning("Open Location", f"Could not open the AAF location: {e}")
 
     # Layout - use ttk.Frame like ALE
     frm = ttk.Frame(root, padding=12)
