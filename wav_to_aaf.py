@@ -2636,21 +2636,23 @@ def launch_gui():
             pass
 
     def open_output_location():
-        # Prefer revealing the last created AAF file if tracked
+        # Prefer opening the folder containing the last created AAF file if tracked
         paths = last_outputs.get('paths') or []
         if paths:
             target = paths[-1]  # last created AAF
             try:
-                # Normalize path separators for Windows
+                # Open the folder containing the AAF, not the AAF itself
                 if sys.platform == 'win32':
-                    target = os.path.normpath(target)
-                log(f"Opening location: {target}")
-                if sys.platform == 'darwin':
-                    subprocess.run(['open', '-R', target], check=False)
-                elif sys.platform == 'win32':
-                    subprocess.run(['explorer', '/select,', target], check=False)
+                    folder = os.path.normpath(os.path.dirname(target))
                 else:
-                    subprocess.run(['xdg-open', os.path.dirname(target)], check=False)
+                    folder = os.path.dirname(target)
+                log(f"Opening location: {folder}")
+                if sys.platform == 'darwin':
+                    subprocess.run(['open', folder], check=False)
+                elif sys.platform == 'win32':
+                    os.startfile(folder)
+                else:
+                    subprocess.run(['xdg-open', folder], check=False)
                 return
             except Exception as e:
                 log(f"Failed to open: {e}")
