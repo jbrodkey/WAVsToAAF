@@ -66,12 +66,6 @@ jobs:
           name: WAVsToAAF_v${{ steps.get_version.outputs.version }}
           path: dist/WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
 
-      - name: Upload exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-exe
-          path: dist/WAVsToAAF.exe
-
       - name: Validate Windows build
         shell: cmd
         run: |
