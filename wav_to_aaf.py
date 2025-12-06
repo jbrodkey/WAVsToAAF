@@ -2641,6 +2641,9 @@ def launch_gui():
         if paths:
             target = paths[-1]  # last created AAF
             try:
+                # Normalize path separators for Windows
+                if sys.platform == 'win32':
+                    target = os.path.normpath(target)
                 log(f"Opening location: {target}")
                 if sys.platform == 'darwin':
                     subprocess.run(['open', '-R', target], check=False)
