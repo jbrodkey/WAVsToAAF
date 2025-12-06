@@ -2636,26 +2636,12 @@ def launch_gui():
             pass
 
     def open_output_location():
-        # If the user set an Output Folder, prioritize opening that location
-        outp = (out_var.get().strip() or '')
-        wavp = (wav_var.get().strip() or '')
-        if outp:
-            try:
-                folder = outp if os.path.isdir(outp) else os.path.dirname(outp)
-                if sys.platform == 'darwin':
-                    subprocess.run(['open', folder], check=False)
-                elif sys.platform == 'win32':
-                    os.startfile(folder)
-                else:
-                    subprocess.run(['xdg-open', folder], check=False)
-                return
-            except Exception:
-                pass
-        # Otherwise, prefer revealing the last created AAF file if tracked
+        # Prefer revealing the last created AAF file if tracked
         paths = last_outputs.get('paths') or []
         if paths:
             target = paths[-1]  # last created AAF
             try:
+                log(f"Opening location: {target}")
                 if sys.platform == 'darwin':
                     subprocess.run(['open', '-R', target], check=False)
                 elif sys.platform == 'win32':
@@ -2663,9 +2649,29 @@ def launch_gui():
                 else:
                     subprocess.run(['xdg-open', os.path.dirname(target)], check=False)
                 return
-            except Exception:
+            except Exception as e:
+                log(f"Failed to open: {e}")
                 pass
-        # Fallback: open expected folder based on inputs
+        
+        # Fallback: check if the user set an Output Folder
+        outp = (out_var.get().strip() or '')
+        wavp = (wav_var.get().strip() or '')
+        if outp:
+            try:
+                folder = outp if os.path.isdir(outp) else os.path.dirname(outp)
+                log(f"Opening output folder: {folder}")
+                if sys.platform == 'darwin':
+                    subprocess.run(['open', folder], check=False)
+                elif sys.platform == 'win32':
+                    os.startfile(folder)
+                else:
+                    subprocess.run(['xdg-open', folder], check=False)
+                return
+            except Exception as e:
+                log(f"Failed to open: {e}")
+                pass
+        
+        # Last resort fallback: open expected folder based on inputs
         try:
             if os.path.isfile(wavp):
                 # Single file case: default output is AAFs subdirectory
@@ -2674,6 +2680,7 @@ def launch_gui():
                 # Directory case: use the parent directory's AAFs
                 folder = os.path.join(os.path.dirname(wavp), 'AAFs')
             
+            log(f"Opening fallback folder: {folder}")
             if os.path.isdir(folder):
                 if sys.platform == 'darwin':
                     subprocess.run(['open', folder], check=False)
@@ -2682,8 +2689,10 @@ def launch_gui():
                 else:
                     subprocess.run(['xdg-open', folder], check=False)
             else:
+                log(f"Folder does not exist: {folder}")
                 messagebox.showwarning("Open Location", f"AAF folder not found: {folder}")
         except Exception as e:
+            log(f"Failed to open location: {e}")
             messagebox.showwarning("Open Location", f"Could not open the AAF location: {e}")
 
     # Layout - use ttk.Frame like ALE
