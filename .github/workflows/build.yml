@@ -55,12 +55,12 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.get_version.outputs.version }}"
-          $folderName = "WAVsToAAF_v$version"
+          $folderName = "WAVsToAAF"
           New-Item -ItemType Directory -Path "dist/$folderName" -Force
           Copy-Item dist/WAVsToAAF.exe "dist/$folderName/"
           Copy-Item docs/README_windows.md "dist/$folderName/"
           cd dist
-          Compress-Archive -Path $folderName -DestinationPath "$folderName.zip"
+          Compress-Archive -Path $folderName -DestinationPath "WAVsToAAF_v$version.zip"
           Get-ChildItem -Force
 
       - name: Upload zip package
