@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build script for WAVsToAAF macOS
 
+# Change to repo root directory
+cd "$(dirname "$0")/.." || exit 1
+
 echo "Building WAVsToAAF..."
 
 # Check for icon file
