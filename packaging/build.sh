@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for WAVsToAAF
+# Build script for WAVsToAAF macOS
 
 echo "Building WAVsToAAF..."
 
@@ -16,7 +16,7 @@ rm -rf build/ dist/
 
 # Build with PyInstaller using spec file
 echo "Building application..."
-pyinstaller packaging/WAVsToAAF.spec
+pyinstaller WAVsToAAF.spec
 
 # Check if build succeeded
 if [ -d "dist/WAVsToAAF.app" ]; then
