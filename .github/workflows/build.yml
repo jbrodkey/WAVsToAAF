@@ -43,7 +43,7 @@ jobs:
         run: |
           cd dist
           Compress-Archive -Path 'WAVsToAAF.exe' -DestinationPath 'WAVsToAAF-Windows-v1.0.0.zip'
-          ls -la
+          Get-ChildItem -Force
 
       - name: Upload zip package
         uses: actions/upload-artifact@v4
