@@ -2464,6 +2464,23 @@ def launch_gui():
     except Exception:
         pass
 
+    # Create menu bar
+    menubar = tk.Menu(root)
+    root.config(menu=menubar)
+    
+    help_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="Help", menu=help_menu)
+
+    # Helper function to get bundled file path
+    def get_resource_path(filename):
+        """Get path to bundled file (works in both dev and PyInstaller modes)."""
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle
+            return os.path.join(sys._MEIPASS, filename)
+        else:
+            # Running from source
+            return os.path.join(os.path.dirname(__file__), filename)
+
     # Variables
     wav_var = tk.StringVar()
     out_var = tk.StringVar()
@@ -2474,6 +2491,73 @@ def launch_gui():
     last_outputs = {'paths': []}
     cancel_event = threading.Event()
     processor = WAVsToAAFProcessor()
+
+    # Help menu functions
+    def show_about():
+        """Show About dialog."""
+        messagebox.showinfo(
+            "About WAVsToAAF",
+            f"WAVsToAAF v{__version__}\n\n"
+            "Convert WAV files to Advanced Authoring Format (AAF)\n"
+            "with rich metadata for fast organizing, relinking,\n"
+            "and batch import in Avid Media Composer.\n\n"
+            "© Jason Brodkey\n"
+            "www.editcandy.com"
+        )
+
+    def show_license():
+        """Display the LICENSES.txt file in a new window."""
+        try:
+            license_path = get_resource_path('LICENSES.txt')
+            if os.path.exists(license_path):
+                with open(license_path, 'r') as f:
+                    license_text = f.read()
+                
+                # Create a new window for license display
+                license_win = tk.Toplevel(root)
+                license_win.title("Licenses")
+                license_win.geometry("600x400")
+                
+                text_widget = ScrolledText(license_win, state='normal', wrap='word')
+                text_widget.pack(fill='both', expand=True, padx=8, pady=8)
+                text_widget.insert('1.0', license_text)
+                text_widget.configure(state='disabled')
+            else:
+                messagebox.showinfo("Licenses", "License file not found")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open licenses: {e}")
+
+    def show_help():
+        """Display help/readme documentation."""
+        try:
+            # Try platform-specific readme first, then generic README
+            if sys.platform == 'darwin':
+                readme_path = get_resource_path('docs/README_mac.md')
+            elif sys.platform == 'win32':
+                readme_path = get_resource_path('docs/README_windows.md')
+            else:
+                readme_path = get_resource_path('README.md')
+            
+            if not os.path.exists(readme_path):
+                readme_path = get_resource_path('README.md')
+            
+            if os.path.exists(readme_path):
+                with open(readme_path, 'r') as f:
+                    readme_text = f.read()
+                
+                # Create a new window for help display
+                help_win = tk.Toplevel(root)
+                help_win.title("Help")
+                help_win.geometry("700x500")
+                
+                text_widget = ScrolledText(help_win, state='normal', wrap='word')
+                text_widget.pack(fill='both', expand=True, padx=8, pady=8)
+                text_widget.insert('1.0', readme_text)
+                text_widget.configure(state='disabled')
+            else:
+                messagebox.showinfo("Help", "Help documentation not found")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open help: {e}")
 
     def log(msg):
         log_text.configure(state='normal')
@@ -2740,6 +2824,18 @@ def launch_gui():
                 messagebox.showwarning("Open Location", f"AAF folder not found: {folder}")
         except Exception as e:
             messagebox.showwarning("Open Location", f"Could not open the AAF location: {e}")
+
+    # Create menu bar
+    menubar = tk.Menu(root)
+    root.config(menu=menubar)
+    
+    # Help menu
+    help_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="Help", menu=help_menu)
+    help_menu.add_command(label="Help Documentation", command=show_help)
+    help_menu.add_separator()
+    help_menu.add_command(label="About", command=show_about)
+    help_menu.add_command(label="Licenses", command=show_license)
 
     # Layout - use ttk.Frame like ALE
     frm = ttk.Frame(root, padding=12)
