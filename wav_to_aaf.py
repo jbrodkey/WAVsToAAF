@@ -2470,6 +2470,7 @@ def launch_gui():
     fps_var = tk.StringVar(value="24")
     embed_var = tk.BooleanVar(value=True)
     infer_ucs_var = tk.BooleanVar(value=True)
+    progress_var = tk.StringVar(value="")
     last_outputs = {'paths': []}
     cancel_event = threading.Event()
     processor = WAVsToAAFProcessor()
@@ -2479,6 +2480,18 @@ def launch_gui():
         log_text.insert('end', str(msg) + "\n")
         log_text.see('end')
         log_text.configure(state='disabled')
+        # Parse progress "X/Y" from batch processing output
+        try:
+            s = str(msg)
+            if "/" in s and "%" in s:
+                # Extract X/Y from progress bar line like "1/18 (5.6%)"
+                parts = s.split()
+                for part in parts:
+                    if "/" in part and part[0].isdigit():
+                        progress_var.set(f"Processing {part}")
+                        break
+        except Exception:
+            pass
         # Capture generated AAF paths from log lines to enable Reveal button
         try:
             s = str(msg)
@@ -2543,25 +2556,51 @@ def launch_gui():
         if not wavp:
             messagebox.showerror("Missing input", "Please select a WAV file or directory.")
             return
+        
+        # Verify source still exists (catch cases where user deleted/moved file before clicking Run)
+        if not os.path.exists(wavp):
+            messagebox.showerror("Source not found", "The selected source is not available")
+            return
 
-        # Set default output if not specified or if it's just a directory for single file mode
+        # Normalize output path to always include AAFs directory structure
         is_single_file = os.path.isfile(wavp)
         if is_single_file:
             # For single file processing
-            if not outp or os.path.isdir(outp):
-                # Generate full output path if not specified or only folder specified
-                out_folder = outp if (outp and os.path.isdir(outp)) else os.path.join(os.path.dirname(wavp), "AAFs")
-                # Create output folder if it doesn't exist
-                try:
-                    os.makedirs(out_folder, exist_ok=True)
-                except Exception:
-                    pass
-                outp = os.path.join(out_folder, os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
-                log(f"Output will be: {outp}")
+            if not outp:
+                # Default: AAFs folder next to the file
+                out_folder = os.path.join(os.path.dirname(wavp), "AAFs")
+            else:
+                # User specified output - force it to end with AAFs
+                if not outp.rstrip('/\\').endswith("AAFs"):
+                    out_folder = os.path.join(outp, "AAFs")
+                else:
+                    out_folder = outp.rstrip('/\\')
+            # Create output folder if it doesn't exist
+            try:
+                os.makedirs(out_folder, exist_ok=True)
+            except Exception:
+                pass
+            outp = os.path.join(out_folder, os.path.splitext(os.path.basename(wavp))[0] + ".aaf")
+            log(f"Output will be: {outp}")
         else:
-            # Directory mode - outp can be None (will use default AAFs logic) or a directory path
-            if outp and not os.path.isdir(outp):
-                outp = None  # Invalid output path, ignore it
+            # Directory mode - always use AAFs structure
+            if not outp:
+                # Default: AAFs folder as sibling with directory structure preserved
+                dir_path = wavp.rstrip('/\\')
+                dir_name = os.path.basename(dir_path)
+                parent = os.path.dirname(dir_path)
+                parent_name = os.path.basename(parent) if parent else ""
+                # Include parent directory name if it exists (preserve one level of structure)
+                if parent_name:
+                    outp = os.path.join(os.path.dirname(parent), "AAFs", parent_name, dir_name)
+                else:
+                    outp = os.path.join(parent, "AAFs", dir_name)
+            else:
+                # User specified output - force it to end with AAFs
+                if not outp.rstrip('/\\').endswith("AAFs"):
+                    outp = os.path.join(outp, "AAFs")
+                else:
+                    outp = outp.rstrip('/\\')
 
         # Run in a thread to keep UI responsive
         cancel_event.clear()
@@ -2575,6 +2614,7 @@ def launch_gui():
             log("Starting conversion…")
             log(f"Frame rate: {fps} fps")
             log(f"Audio: {'Embedded' if embed_audio else 'Linked'}")
+            progress_var.set("")  # Reset progress display
             last_outputs['paths'].clear()
             ok = False
             try:
@@ -2589,14 +2629,21 @@ def launch_gui():
                     if ok and outp:
                         last_outputs['paths'].append(outp)
                 else:
-                    # Directory mode - outp is None, will use default AAFs logic
+                    # Directory mode - outp is now computed AAFs path
                     result = processor.process_directory(
                         wavp, outp, fps=fps, embed_audio=embed_audio,
                         auto_skip_log=write_skip_log, allow_ucs_guess=allow_ucs_guess
                     )
                     ok = (result == 0)
             except Exception as e:
-                log(f"Error: {e}")
+                error_str = str(e)
+                # Check for common ffmpeg/source not found errors
+                if "returned non-zero exit status" in error_str or "No such file" in error_str or not os.path.exists(wavp):
+                    log(f"Source not found: The source file or directory is no longer available or cannot be accessed")
+                    messagebox.showerror("Source not found", f"The source file or directory is no longer available or cannot be accessed:\n{wavp}")
+                elif error_str.strip():
+                    log(f"Error: {e}")
+                    messagebox.showerror("Error", f"AAF creation failed: {e}")
                 ok = False
 
             # Update UI from main thread
@@ -2629,6 +2676,7 @@ def launch_gui():
         log_text.configure(state='normal')
         log_text.delete('1.0', 'end')
         log_text.configure(state='disabled')
+        progress_var.set("")  # Reset progress display
         # Also hide the Open AAF Location button
         try:
             open_btn.pack_forget()
@@ -2740,10 +2788,12 @@ def launch_gui():
     except Exception:
         pass
 
-    # Log area with clear button
+    # Log area with progress display and clear button
     log_header = ttk.Frame(frm)
     log_header.grid(row=7, column=0, columnspan=3, sticky='ew', pady=(0, 2))
     ttk.Label(log_header, text="Output Log").pack(side='left')
+    progress_lbl = ttk.Label(log_header, textvariable=progress_var, foreground="#555555")
+    progress_lbl.pack(side='left', padx=(12, 0))
     ttk.Button(log_header, text="Clear", command=clear_log, width=8).pack(side='right')
 
     log_text = ScrolledText(frm, height=16, state='disabled')
@@ -2767,10 +2817,39 @@ def launch_gui():
 
     frm.columnconfigure(0, weight=1)
 
-    # Redirect stdout to log
+    # Redirect stdout to log with smart carriage return handling
     class StdoutRedirector:
+        def __init__(self):
+            self.last_was_carriage_return = False
+        
         def write(self, message):
-            log(message.rstrip('\n')) if message.strip() else None
+            if not message:
+                return
+            
+            # Handle carriage return (\r) - used by progress bars to update same line
+            if '\r' in message:
+                # Split by \r and process each part
+                parts = message.split('\r')
+                for i, part in enumerate(parts):
+                    if not part.strip():
+                        continue
+                    
+                    if i > 0 or self.last_was_carriage_return:
+                        # Replace last line in log
+                        log_text.configure(state='normal')
+                        log_text.delete("end-2l", "end-1l")
+                        log_text.configure(state='disabled')
+                    
+                    if part.strip():
+                        log(part.rstrip('\n'))
+                
+                self.last_was_carriage_return = True
+            else:
+                # Normal output
+                if message.strip():
+                    log(message.rstrip('\n'))
+                self.last_was_carriage_return = False
+        
         def flush(self):
             pass
 
