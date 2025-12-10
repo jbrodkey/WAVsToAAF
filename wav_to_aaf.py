@@ -2829,12 +2829,17 @@ def launch_gui():
     menubar = tk.Menu(root)
     root.config(menu=menubar)
     
+    # App menu (WAVsToAAF)
+    app_menu = tk.Menu(menubar, tearoff=0, name='apple')
+    menubar.add_cascade(label="WAVsToAAF", menu=app_menu)
+    app_menu.add_command(label="About WAVsToAAF", command=show_about)
+    app_menu.add_separator()
+    
     # Help menu
     help_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="Help", menu=help_menu)
     help_menu.add_command(label="Help Documentation", command=show_help)
     help_menu.add_separator()
-    help_menu.add_command(label="About", command=show_about)
     help_menu.add_command(label="Licenses", command=show_license)
 
     # Layout - use ttk.Frame like ALE
