@@ -2464,13 +2464,6 @@ def launch_gui():
     except Exception:
         pass
 
-    # Create menu bar
-    menubar = tk.Menu(root)
-    root.config(menu=menubar)
-    
-    help_menu = tk.Menu(menubar, tearoff=0)
-    menubar.add_cascade(label="Help", menu=help_menu)
-
     # Helper function to get bundled file path
     def get_resource_path(filename):
         """Get path to bundled file (works in both dev and PyInstaller modes)."""
@@ -2828,6 +2821,12 @@ def launch_gui():
     # Create menu bar
     menubar = tk.Menu(root)
     root.config(menu=menubar)
+    
+    # Map macOS About menu to custom dialog
+    try:
+        root.createcommand('tkAboutDialog', show_about)
+    except Exception:
+        pass
     
     # App menu (WAVsToAAF)
     app_menu = tk.Menu(menubar, tearoff=0, name='apple')
