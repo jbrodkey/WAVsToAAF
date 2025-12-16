@@ -7,7 +7,7 @@ cd "$(dirname "$0")" || exit 1
 echo "Building WAVsToAAF..."
 
 # Extract version from _version.py
-VERSION=$(grep -oP "(?<=')[^']*(?=')" _version.py | head -1)
+VERSION=$(grep "__version__" _version.py | sed 's/.*"\(.*\)".*/\1/')
 echo "Version: $VERSION"
 
 # Check for icon file

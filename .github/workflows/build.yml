@@ -47,6 +47,10 @@ jobs:
         run: |
           python -m py_compile wav_to_aaf.py
 
+      - name: Generate Windows version info
+        run: |
+          python packaging/generate_version_info.py
+
       - name: Build exe (PyInstaller using spec file)
         run: |
           pyinstaller packaging/WAVsToAAF-Windows.spec

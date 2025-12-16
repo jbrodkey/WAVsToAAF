@@ -6,6 +6,16 @@ spec_dir = os.path.dirname(os.path.abspath(SPEC))
 # Get the parent directory (WAVsToAAF root)
 root_dir = os.path.dirname(spec_dir)
 
+# Extract version from _version.py
+version = '1.0.0'  # default
+version_file = os.path.join(root_dir, '_version.py')
+if os.path.exists(version_file):
+    with open(version_file, 'r') as f:
+        for line in f:
+            if '__version__' in line:
+                version = line.split('=')[1].strip().strip('"').strip("'")
+                break
+
 # Bundle data files and main scripts for Windows
 datas = [
     (os.path.join(root_dir, 'data'), 'data'),
@@ -69,4 +79,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=os.path.join(root_dir, 'icons', 'win', 'WAVsToAAF.ico'),
+    version=os.path.join(spec_dir, 'version_info.txt'),
 )
