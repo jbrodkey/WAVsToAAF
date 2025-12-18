@@ -71,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WAVsToAAF_v${{ steps.get_version.outputs.version }}
-          path: dist/WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
+          path: dist/WAVsToAAF
 
       - name: Validate Windows build
         shell: cmd
