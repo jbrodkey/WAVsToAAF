@@ -8,7 +8,8 @@
 
 # pyaaf2 is required; module is imported as "aaf2"
 pyaaf2>=1.6.0           # For AAF read/write support
-# lxml>=4.6.0            # For enhanced XML processing (future)  
+# tkinterdnd2>=0.3.0      # Optional GUI drag-and-drop support
+# lxml>=4.6.0            # For enhanced XML processing (future)
 # colorama>=0.4.4        # For colored terminal output (future)
 
 # Development dependencies:

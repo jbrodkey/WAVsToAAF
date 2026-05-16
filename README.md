@@ -2,7 +2,7 @@
 
 Convert WAV files to Advanced Authoring Format (AAF) with rich metadata for fast organizing, relinking, and batch import in Avid Media Composer and other AAF-compatible tools.
 
-Version: v1.0.0
+Version: v1.1.0
 
 ## Overview
 

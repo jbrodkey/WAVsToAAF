@@ -44,10 +44,13 @@ import io
 import hashlib
 import threading
 import subprocess
+import tempfile
+import shutil
 import webbrowser
+import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 import aaf2
 import aaf2.auid
@@ -56,6 +59,10 @@ import aaf2.misc
 
 # Import version from _version.py
 from _version import __version__, __author__
+
+# Configure logging
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 # AAF Pan Control AUIDs
 AAF_PARAMETERDEF_PAN = aaf2.auid.AUID("e4962322-2267-11d3-8a4c-0050040ef7d2")
@@ -79,8 +86,9 @@ def _apply_pan_to_slot(f, mslot, mclip, pan_value: float, length_val: int):
         param_def = f.create.ParameterDef(AAF_PARAMETERDEF_PAN, "Pan", "Pan", typedef)
         try:
             f.dictionary.register_def(param_def)
-        except Exception:
+        except Exception as e:
             # Already registered
+            logger.debug(f"ParameterDef already registered: {e}")
             param_def = f.dictionary.lookup_def(AAF_PARAMETERDEF_PAN)
         
         # Register InterpolationDef
@@ -89,7 +97,8 @@ def _apply_pan_to_slot(f, mslot, mclip, pan_value: float, length_val: int):
                 aaf2.misc.LinearInterp, "LinearInterp", "LinearInterp"
             )
             f.dictionary.register_def(interp_def)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"InterpolationDef already registered: {e}")
             interp_def = f.dictionary.lookup_def(aaf2.misc.LinearInterp)
         
         # Register OperationDef for MonoAudioPan
@@ -98,7 +107,8 @@ def _apply_pan_to_slot(f, mslot, mclip, pan_value: float, length_val: int):
             opdef.media_kind = "sound"
             opdef["NumberInputs"].value = 1
             f.dictionary.register_def(opdef)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"OperationDef already registered: {e}")
             opdef = f.dictionary.lookup_def(AAF_OPERATIONDEF_MONOAUDIOPAN)
         
         # Create OperationGroup
@@ -133,9 +143,74 @@ def _apply_pan_to_slot(f, mslot, mclip, pan_value: float, length_val: int):
         opgroup.segments.append(mclip)
         mslot.segment = opgroup
         
-    except Exception:
+    except Exception as e:
         # Fallback: use clip without pan control
+        logger.warning(f"Failed to apply pan control, using clip without pan: {e}")
         mslot.segment = mclip
+
+
+COMMON_FFMPEG_PATHS = [
+    "/opt/homebrew/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "/usr/bin/ffmpeg",
+    "/bin/ffmpeg",
+    "/usr/local/opt/ffmpeg/bin/ffmpeg",
+]
+
+if os.name == 'nt':
+    COMMON_FFMPEG_PATHS.extend([
+        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+        r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+        r"C:\tools\ffmpeg\bin\ffmpeg.exe",
+    ])
+
+
+def find_ffmpeg_executable() -> Optional[str]:
+    """Return the path to ffmpeg if available, searching PATH and common install locations."""
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        return ffmpeg_path
+
+    for path in COMMON_FFMPEG_PATHS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+
+    return None
+
+
+def ffmpeg_available() -> bool:
+    """Return True if ffmpeg is available."""
+    return find_ffmpeg_executable() is not None
+
+
+def convert_to_wav(src_path: str, dst_path: str, samplerate: int = 48000, bits: int = 24, channels: Optional[int] = None) -> None:
+    """Convert a source audio file to PCM WAV with the requested bit depth and sample rate."""
+    ffmpeg_path = find_ffmpeg_executable()
+    if not ffmpeg_path:
+        raise FileNotFoundError(
+            "ffmpeg must be installed and available in PATH or in a standard location. "
+            "On macOS, install it with Homebrew: brew install ffmpeg. "
+            "On Windows, add ffmpeg.exe to PATH or install via Chocolatey: choco install ffmpeg."
+        )
+
+    codec = "pcm_s24le" if bits == 24 else "pcm_s16le"
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        src_path,
+    ]
+    if samplerate is not None:
+        cmd.extend(["-ar", str(samplerate)])
+    if channels is not None:
+        cmd.extend(["-ac", str(channels)])
+    cmd.extend(["-acodec", codec, dst_path])
+
+    subprocess.run(cmd, check=True)
 
 
 def create_deterministic_umid(wav_path: Path, mob_type: str = "master", tape_mode: bool = False) -> aaf2.mobid.MobID:
@@ -198,7 +273,7 @@ class WAVMetadataExtractor:
     def __init__(self):
         self.supported_formats = ['.wav', '.wave']
     
-    def extract_basic_info(self, wav_path: str) -> Dict:
+    def extract_basic_info(self, wav_path: str, allow_fallback: bool = True) -> Dict:
         """Extract basic audio information from WAV file"""
         try:
             with wave.open(wav_path, 'rb') as wav_file:
@@ -222,8 +297,63 @@ class WAVMetadataExtractor:
                     'modification_time': datetime.fromtimestamp(os.path.getmtime(wav_path)).isoformat()
                 }
         except Exception as e:
-            print(f"Error reading {wav_path}: {e}")
+            wave_info = self._describe_wave_file(wav_path)
+            if allow_fallback and ffmpeg_available():
+                try:
+                    tmp = tempfile.NamedTemporaryFile(prefix=f"{Path(wav_path).stem}_fallback_", suffix='.wav', delete=False)
+                    tmp.close()
+                    convert_to_wav(wav_path, tmp.name, samplerate=None, bits=24, channels=None)
+                    fallback_metadata = self.extract_basic_info(tmp.name, allow_fallback=False)
+                    if fallback_metadata:
+                        fallback_metadata['filename'] = Path(wav_path).name
+                        fallback_metadata['filepath'] = wav_path
+                        fallback_metadata['original_filepath'] = wav_path
+                        fallback_metadata['converted_filepath'] = tmp.name
+                        return fallback_metadata
+                except Exception as conv_e:
+                    print(f"Error converting unsupported WAV {wav_path} to PCM: {conv_e}")
+                    try:
+                        os.unlink(tmp.name)
+                    except Exception:
+                        pass
+            print(f"Error reading {wav_path}: {e}; {wave_info}")
             return {}
+
+    def _describe_wave_file(self, wav_path: str) -> str:
+        """Return a human-readable description of WAV header fields for diagnostic output."""
+        try:
+            with open(wav_path, 'rb') as f:
+                if f.read(12)[:4] != b'RIFF':
+                    return 'Not a RIFF file'
+                f.seek(8)
+                if f.read(4) != b'WAVE':
+                    return 'Not a WAVE file'
+                f.seek(12)
+                while True:
+                    header = f.read(8)
+                    if len(header) < 8:
+                        break
+                    chunk_id, chunk_size = header[:4], struct.unpack('<I', header[4:])[0]
+                    if chunk_id == b'fmt ':
+                        fmt_data = f.read(chunk_size)
+                        if len(fmt_data) < 16:
+                            return 'fmt chunk too short'
+                        audio_format = struct.unpack('<H', fmt_data[0:2])[0]
+                        channels = struct.unpack('<H', fmt_data[2:4])[0]
+                        sample_rate = struct.unpack('<I', fmt_data[4:8])[0]
+                        bits_per_sample = struct.unpack('<H', fmt_data[14:16])[0]
+                        format_name = {
+                            1: 'PCM',
+                            3: 'IEEE_FLOAT',
+                            6: 'A-law',
+                            7: 'µ-law'
+                        }.get(audio_format, f'format={audio_format}')
+                        return f'{format_name}, channels={channels}, sample_rate={sample_rate}, bits_per_sample={bits_per_sample}'
+                    else:
+                        f.seek(chunk_size + (chunk_size % 2), 1)
+        except Exception as e:
+            return f'Could not parse WAV header: {e}'
+        return 'fmt chunk not found'
     
     def extract_bext_chunk(self, wav_path: str) -> Dict:
         """Extract BEXT chunk data from WAV file"""
@@ -338,7 +468,8 @@ class WAVMetadataExtractor:
                             try:
                                 chunk_name = chunk_id.decode('ascii')
                                 info_metadata[chunk_name] = self._sanitize_string(chunk_data)
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"Failed to decode chunk name {chunk_id}: {e}")
                                 info_metadata[str(chunk_id)] = self._sanitize_string(chunk_data)
                         
                         # Move to next subchunk (chunks are word-aligned)
@@ -482,12 +613,13 @@ class WAVMetadataExtractor:
                                 attr_key = f"{tag}_{attr_name}"
                                 metadata[attr_key] = self._sanitize_string(attr_value.strip())
                 
-            except ET.ParseError:
+            except ET.ParseError as e:
                 # If XML parsing fails, try to extract key-value pairs manually
+                logger.warning(f"XML parsing failed, falling back to manual extraction: {e}")
                 metadata = self._extract_xml_manually(xml_data)
                 
         except Exception as e:
-            print(f"Error parsing XML content: {e}")
+            logger.warning(f"Error parsing XML content: {e}")
         
         return metadata
     
@@ -825,6 +957,7 @@ class AAFGenerator:
                 import_mob = f.create.SourceMob()
                 from pathlib import Path
                 wav_path = Path(wav_metadata.get('filepath', ''))
+                wav_source_path = Path(wav_metadata.get('converted_filepath', str(wav_path)))
                 if use_mc_exact_linked and wav_path.exists():
                     # Build one SourceMob per channel, with PCMDescriptor and file locators
                     source_mobs = []
@@ -851,8 +984,8 @@ class AAFGenerator:
                         try:
                             codec = f.dictionary.lookup_codecdef('PCM')
                             pcm['CodecDefinition'].value = codec
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"PCM codec definition not found: {e}")
 
                         # Add locators - use relative if requested
                         if relative_locators:
@@ -1091,7 +1224,7 @@ class AAFGenerator:
                             import tempfile, os, wave as _wave
                             tmp_paths = []
                             try:
-                                with _wave.open(str(wav_path), 'rb') as r:
+                                with _wave.open(str(wav_source_path), 'rb') as r:
                                     nch = r.getnchannels()
                                     sampwidth = r.getsampwidth()
                                     fr = r.getframerate()
@@ -1169,7 +1302,7 @@ class AAFGenerator:
                             try:
                                 # import_audio_essence expects a path and will write essence into the file
                                 # The returned source_slot contains descriptor and slot length info
-                                source_slot = wave_mob.import_audio_essence(str(wav_path), edit_rate=sample_rate)
+                                source_slot = wave_mob.import_audio_essence(str(wav_source_path), edit_rate=sample_rate)
                                 # descriptor and essence data have been attached to wave_mob by the helper
                                 channel_mobs.append(wave_mob)
                             except Exception as e:
@@ -1976,11 +2109,50 @@ class WAVsToAAFProcessor:
         self.generator = AAFGenerator()
         self.ucs_processor = UCSProcessor()
     
+    def _prepare_audio_source(self, wav_file: Path, target_sample_rate: Optional[int] = None,
+                              target_bit_depth: Optional[int] = None) -> Tuple[Path, Optional[str]]:
+        """Return a WAV file path matching requested sample rate/bit depth, converting if needed."""
+        if target_sample_rate is None and target_bit_depth is None:
+            return wav_file, None
+
+        try:
+            with wave.open(str(wav_file), 'rb') as src_wav:
+                src_channels = src_wav.getnchannels()
+                src_sample_rate = src_wav.getframerate()
+                src_bit_depth = src_wav.getsampwidth() * 8
+        except Exception as e:
+            raise Exception(f"Could not inspect WAV file '{wav_file}': {e}")
+
+        requested_sample_rate = target_sample_rate if target_sample_rate is not None else src_sample_rate
+        requested_bit_depth = target_bit_depth if target_bit_depth is not None else src_bit_depth
+
+        if requested_sample_rate == src_sample_rate and requested_bit_depth == src_bit_depth:
+            return wav_file, None
+
+        if not ffmpeg_available():
+            raise FileNotFoundError(
+                "ffmpeg must be installed and available in PATH or a common location to convert WAV sample rate/bit depth."
+                " On macOS, install with Homebrew: brew install ffmpeg"
+            )
+
+        tmp_file = tempfile.NamedTemporaryFile(prefix=f"{wav_file.stem}_converted_", suffix='.wav', delete=False)
+        tmp_file.close()
+
+        convert_to_wav(
+            str(wav_file), tmp_file.name,
+            samplerate=requested_sample_rate,
+            bits=requested_bit_depth,
+            channels=src_channels
+        )
+
+        return Path(tmp_file.name), tmp_file.name
+
     def process_directory(self, input_dir: str, output_dir: str, fps: float = 24, embed_audio: bool = False,
                           link_mode: str = 'import', emit_ale: bool = False, one_aaf: bool = False,
                           near_sources: bool = False, tape_mode: bool = False, relative_locators: bool = False,
+                          bit_depth: Optional[int] = None, sample_rate: Optional[int] = None,
                           skip_log_path: Optional[str] = None, auto_skip_log: bool = False,
-                          allow_ucs_guess: bool = True) -> int:
+                          allow_ucs_guess: bool = True, cancel_event: Optional[Any] = None) -> int:
         """Process all WAV files in a directory"""
         input_path = Path(input_dir)
         
@@ -2049,7 +2221,11 @@ class WAVsToAAFProcessor:
                 print("Falling back to individual AAFs per clip.")
                 print("Use --linked flag if you want multi-clip AAFs with external file references.")
                 one_aaf = False  # Force individual AAF mode
-        
+
+        if one_aaf and (bit_depth is not None or sample_rate is not None):
+            print("Error: --bit-depth and --sample-rate cannot be used with --one-aaf because multi-clip AAFs are linked only.")
+            return 1
+
         if one_aaf:
             # Build multi-clip AAF in one file (linked mode only)
             wav_entries = []
@@ -2117,12 +2293,43 @@ class WAVsToAAFProcessor:
                 print(f"  Error creating multi-clip AAF: {e}")
         else:
             # One AAF per clip
+            if not embed_audio and (bit_depth is not None or sample_rate is not None):
+                print("Warning: --bit-depth and --sample-rate are only applied to embedded AAF audio. Linked AAFs will use original WAV specs.")
+
             for wav_file in wav_files:
+                # Check for cancellation
+                if cancel_event and cancel_event.is_set():
+                    print("\nBatch processing cancelled by user.")
+                    break
+                    
                 try:
                     print(f"Processing: {wav_file.name}")
-                    wav_metadata = self.extractor.extract_basic_info(str(wav_file))
+                    source_wav = wav_file
+                    temp_wav_cleanup = None
+                    if embed_audio and (bit_depth is not None or sample_rate is not None):
+                        try:
+                            source_wav, temp_wav_cleanup = self._prepare_audio_source(
+                                wav_file,
+                                target_sample_rate=sample_rate,
+                                target_bit_depth=bit_depth
+                            )
+                        except Exception as e:
+                            print(f"  Error preparing {wav_file.name} for conversion: {e}")
+                            continue
+
+                    wav_metadata = self.extractor.extract_basic_info(str(source_wav))
+                    if temp_wav_cleanup is not None:
+                        wav_metadata['filename'] = wav_file.name
+                        wav_metadata['filepath'] = str(source_wav)
+                        wav_metadata['source_filepath'] = str(wav_file)
+
                     if not wav_metadata:
                         print(f"  Skipping {wav_file.name}: Could not read metadata")
+                        if temp_wav_cleanup:
+                            try:
+                                os.unlink(temp_wav_cleanup)
+                            except Exception:
+                                pass
                         continue
                     # Extract all metadata chunks
                     all_chunks = self.extractor.extract_all_metadata_chunks(str(wav_file))
@@ -2194,6 +2401,12 @@ class WAVsToAAFProcessor:
                     add_ale_row_from_wavmeta(wav_file, wav_metadata)
                 except Exception as e:
                     print(f"  Error processing {wav_file.name}: {e}")
+                finally:
+                    if temp_wav_cleanup:
+                        try:
+                            os.unlink(temp_wav_cleanup)
+                        except Exception:
+                            pass
 
         # Optionally write ALE
         if emit_ale and ale_rows:
@@ -2235,6 +2448,7 @@ class WAVsToAAFProcessor:
     
     def process_single_file(self, wav_file: str, output_file: str, fps: float = 24, embed_audio: bool = False,
                             link_mode: str = 'import', relative_locators: bool = False,
+                            bit_depth: Optional[int] = None, sample_rate: Optional[int] = None,
                             skip_log_path: Optional[str] = None, auto_skip_log: bool = False,
                             allow_ucs_guess: bool = True) -> int:
         """Process a single WAV file"""
@@ -2251,11 +2465,43 @@ class WAVsToAAFProcessor:
                 print(f"Error: Unsupported input format '{ext}'. This tool only supports WAV files (.wav, .wave).")
                 return 1
 
+            if not embed_audio and (bit_depth is not None or sample_rate is not None):
+                print("Warning: --bit-depth and --sample-rate are only applied to embedded AAF audio. Linked AAFs will use original WAV specs.")
+
+            source_wav = Path(wav_file)
+            temp_wav_cleanup = None
+            fallback_wav_cleanup = None
+            if embed_audio and (bit_depth is not None or sample_rate is not None):
+                try:
+                    source_wav, temp_wav_cleanup = self._prepare_audio_source(
+                        Path(wav_file),
+                        target_sample_rate=sample_rate,
+                        target_bit_depth=bit_depth
+                    )
+                except Exception as e:
+                    print(f"Error preparing {wav_file} for conversion: {e}")
+                    return 1
+
             # Extract metadata
-            wav_metadata = self.extractor.extract_basic_info(wav_file)
-            
+            wav_metadata = self.extractor.extract_basic_info(str(source_wav))
+            fallback_wav_cleanup = wav_metadata.get('converted_filepath') if isinstance(wav_metadata, dict) else None
+            if temp_wav_cleanup is not None:
+                wav_metadata['filename'] = Path(wav_file).name
+                wav_metadata['filepath'] = str(source_wav)
+                wav_metadata['source_filepath'] = str(wav_file)
+
             if not wav_metadata:
                 print(f"Error: Could not read metadata from {wav_file}")
+                if temp_wav_cleanup:
+                    try:
+                        os.unlink(temp_wav_cleanup)
+                    except Exception:
+                        pass
+                if fallback_wav_cleanup:
+                    try:
+                        os.unlink(fallback_wav_cleanup)
+                    except Exception:
+                        pass
                 return 1
             
             # Extract all metadata chunks
@@ -2328,9 +2574,30 @@ class WAVsToAAFProcessor:
             except Exception:
                 pass
 
+            if temp_wav_cleanup:
+                try:
+                    os.unlink(temp_wav_cleanup)
+                except Exception:
+                    pass
+            if fallback_wav_cleanup:
+                try:
+                    os.unlink(fallback_wav_cleanup)
+                except Exception:
+                    pass
+
             return 0
 
         except Exception as e:
+            if temp_wav_cleanup:
+                try:
+                    os.unlink(temp_wav_cleanup)
+                except Exception:
+                    pass
+            if fallback_wav_cleanup:
+                try:
+                    os.unlink(fallback_wav_cleanup)
+                except Exception:
+                    pass
             print(f"Error processing {wav_file}: {e}")
             return 1
 
@@ -3008,6 +3275,10 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
                         help='Save per-clip AAFs next to their source WAV files')
     parser.add_argument('--tape-mode', action='store_true',
                         help='Use TapeDescriptor structure (like ALE-exported AAFs) instead of ImportDescriptor')
+    parser.add_argument('--bit-depth', type=int, choices=[16, 24], default=None,
+                        help='Optional output bit depth for embedded audio (16 or 24). Preserve source depth if omitted.')
+    parser.add_argument('--sample-rate', type=int, choices=[44100, 48000, 96000], default=None,
+                        help='Optional output sample rate in Hz for embedded audio. Preserve source rate if omitted.')
     parser.add_argument('-v', '--version', action='version',
                         version=f'WAVsToAAF {__version__}')
 
@@ -3019,6 +3290,15 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
     # Note: WAVsToAAF intentionally only supports PCM WAV files (.wav, .wave).
     # Other audio formats (AIFF, MP3, FLAC, etc.) are not supported by design.
     args = parser.parse_args()
+
+    if args.linked and (args.bit_depth is not None or args.sample_rate is not None):
+        parser.error("--bit-depth and --sample-rate are only supported when creating embedded AAFs")
+    
+    # Validate ffmpeg availability when audio conversion is requested
+    if not args.linked and (args.bit_depth is not None or args.sample_rate is not None):
+        if not ffmpeg_available():
+            parser.error("ffmpeg is required for audio conversion (--bit-depth, --sample-rate). "
+                        "Please install ffmpeg and add it to your PATH, or use --linked mode for no conversion.")
     
     # If no input provided, use interactive mode
     if args.input is None:
@@ -3045,12 +3325,14 @@ NOTE: WAVsToAAF intentionally accepts PCM WAV files only (extensions: .wav, .wav
     if args.file:
         return processor.process_single_file(args.input, output_path, embed_audio=embed_audio,
                                            link_mode=args.link_mode, relative_locators=args.relative_locators,
+                                           bit_depth=args.bit_depth, sample_rate=args.sample_rate,
                                            allow_ucs_guess=allow_ucs_guess)
     else:
         return processor.process_directory(args.input, output_path, embed_audio=embed_audio,
                                           link_mode=args.link_mode, emit_ale=args.emit_ale, 
                                           one_aaf=args.one_aaf, near_sources=args.near_sources, 
                                           tape_mode=args.tape_mode, relative_locators=args.relative_locators,
+                                          bit_depth=args.bit_depth, sample_rate=args.sample_rate,
                                           allow_ucs_guess=allow_ucs_guess)
 
 def interactive_mode() -> int:
@@ -3125,6 +3407,17 @@ def sanitize_path(path_str: str) -> str:
         pass
     
     return s
+
+def launch_gui():
+    """Launch the WAVsToAAF GUI"""
+    try:
+        import wav_to_aaf_gui
+        wav_to_aaf_gui.launch_gui()
+    except ImportError as e:
+        print(f"Error: Could not import GUI module: {e}")
+        print("Make sure wav_to_aaf_gui.py is in the same directory.")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     # Check for --gui flag to launch GUI mode
