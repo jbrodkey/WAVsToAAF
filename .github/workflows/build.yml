@@ -58,6 +58,24 @@ jobs:
         run: |
           pyinstaller packaging/WAVsToAAF-Windows.spec
 
+      - name: Validate built exe
+        shell: pwsh
+        run: |
+          $exePath = "dist\WAVsToAAF.exe"
+          if (-not (Test-Path $exePath)) {
+            throw "Built executable not found: $exePath"
+          }
+          $versionOut = & $exePath --version
+          Write-Host "WAVsToAAF --version output:"
+          Write-Host $versionOut
+          if ($LASTEXITCODE -ne 0) {
+            throw "WAVsToAAF.exe returned non-zero exit code"
+          }
+          if (Test-Path "$env:TEMP\wavtoaaf_startup.log") {
+            Write-Host "Startup wrapper log found:"
+            Get-Content "$env:TEMP\wavtoaaf_startup.log"
+          }
+
       - name: Create distribution package (zip)
         shell: pwsh
         run: |
@@ -73,8 +91,8 @@ jobs:
       - name: Upload zip package
         uses: actions/upload-artifact@v6
         with:
-          name: WAVsToAAF_v${{ steps.get_version.outputs.version }}
-          path: dist/WAVsToAAF
+          name: WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
+          path: dist/WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
 
       - name: Validate Windows build
         shell: cmd
