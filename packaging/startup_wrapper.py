@@ -54,11 +54,35 @@ def main() -> None:
 
         import wav_to_aaf
 
+        # If the user explicitly asked for GUI mode, prefer that.
+        if '--gui' in sys.argv:
+            try:
+                sys.argv.remove('--gui')
+            except ValueError:
+                pass
+            if hasattr(wav_to_aaf, "launch_gui") and callable(wav_to_aaf.launch_gui):
+                wav_to_aaf.launch_gui()
+                return
+
+        # If any CLI arguments are present (including --version), prefer the
+        # command-line entrypoint `main()` so non-interactive checks work.
+        if len(sys.argv) > 1:
+            if hasattr(wav_to_aaf, "main") and callable(wav_to_aaf.main):
+                # Return/exit with the same code as main() when possible.
+                try:
+                    rc = wav_to_aaf.main()
+                    if isinstance(rc, int):
+                        sys.exit(rc)
+                    return
+                except SystemExit:
+                    raise
+                except Exception:
+                    # Let the outer exception handler record the traceback
+                    raise
+
+        # No CLI args provided: fall back to GUI if available.
         if hasattr(wav_to_aaf, "launch_gui") and callable(wav_to_aaf.launch_gui):
             wav_to_aaf.launch_gui()
-            return
-        if hasattr(wav_to_aaf, "main") and callable(wav_to_aaf.main):
-            wav_to_aaf.main()
             return
 
         module_file = getattr(wav_to_aaf, '__file__', '<unknown>')
