@@ -43,13 +43,51 @@ jobs:
       - name: Download lightweight FFmpeg (release-essentials) for bundling
         shell: pwsh
         run: |
-          # Use a small static "release-essentials" build from BtbN GitHub Releases
           $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-release-essentials.zip'
           $zipPath = 'packaging\ffmpeg.zip'
           $outDir = 'packaging\ffmpeg'
 
-          Write-Host "Downloading FFmpeg from $url"
-          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+          Write-Host "Attempting download of FFmpeg from $url"
+          $downloaded = $false
+
+          # Try curl first (follows redirects reliably)
+          if (Get-Command curl -ErrorAction SilentlyContinue) {
+            Write-Host "Using curl to download"
+            try {
+              curl -L $url -o $zipPath
+              $downloaded = Test-Path $zipPath
+            } catch {
+              Write-Host "curl download failed: $_"
+            }
+          }
+
+          # Fallback to Invoke-WebRequest if curl not available or failed
+          if (-not $downloaded) {
+            Write-Host "Falling back to Invoke-WebRequest"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+              $downloaded = Test-Path $zipPath
+            } catch {
+              Write-Host "Invoke-WebRequest failed: $_"
+            }
+          }
+
+          # If download failed, fallback to Chocolatey copy of full lib dir
+          if (-not $downloaded) {
+            Write-Host "Download failed; falling back to Chocolatey-installed FFmpeg copy"
+            choco install ffmpeg -y
+            $ffmpegLibDir = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg"
+            if (-not (Test-Path $ffmpegLibDir)) {
+              throw "Chocolatey ffmpeg tools directory not found: $ffmpegLibDir"
+            }
+            $destDir = $outDir
+            if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+            Copy-Item $ffmpegLibDir -Destination $destDir -Recurse -Force
+            if (-not (Test-Path "$destDir\bin\ffmpeg.exe") -or -not (Test-Path "$destDir\bin\ffprobe.exe")) {
+              throw "FFmpeg binaries not found after copy to packaging/ffmpeg"
+            }
+            return
+          }
 
           # Clean any previous packaging/ffmpeg
           if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
