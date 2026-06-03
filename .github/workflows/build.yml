@@ -40,76 +40,56 @@ jobs:
           pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Download lightweight FFmpeg (release-essentials) for bundling
+      - name: Download lightweight FFmpeg (gyan.dev) for bundling
         shell: pwsh
         run: |
-          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-release-essentials.zip'
+          # Use gyan.dev which offers lightweight FFmpeg builds (like MXtoAAF does)
+          $baseUrl = 'https://www.gyan.dev/ffmpeg/builds'
           $zipPath = 'packaging\ffmpeg.zip'
           $outDir = 'packaging\ffmpeg'
 
-          Write-Host "Attempting download of FFmpeg from $url"
-          $downloaded = $false
-
-          # Try native curl.exe first (explicitly call curl.exe to avoid PowerShell alias)
-          if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            Write-Host "Using native curl.exe to download"
-            try {
-              & curl.exe -L $url -o $zipPath --fail --silent --show-error
-              if (Test-Path $zipPath) {
-                $size = (Get-Item $zipPath).Length
-                Write-Host "Downloaded file size: $size bytes"
-                if ($size -gt 1000) { $downloaded = $true } else { Write-Host "Downloaded file appears too small" }
-              }
-            } catch {
-              Write-Host "curl.exe download failed: $_"
-            }
+          Write-Host "Fetching latest FFmpeg build from gyan.dev"
+          $buildPage = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing
+          
+          # Look for 'full' build (includes essentials, smaller than 'release')
+          $fullLink = $buildPage.Links | Where-Object { $_.href -match 'ffmpeg-full.*\.zip$' } | Select-Object -First 1
+          
+          if (-not $fullLink) {
+            throw "Could not find FFmpeg build link on gyan.dev"
           }
-
-          # Fallback to Invoke-WebRequest if curl not available or failed
-          if (-not $downloaded) {
-            Write-Host "Falling back to Invoke-WebRequest"
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-              $downloaded = Test-Path $zipPath
-            } catch {
-              Write-Host "Invoke-WebRequest failed: $_"
-            }
+          
+          $url = $fullLink.href
+          if (-not $url.StartsWith('http')) {
+            $url = $baseUrl + '/' + $url
           }
-
-          # If download failed, fallback to Chocolatey copy of full lib dir
-          if (-not $downloaded) {
-            Write-Host "Download failed; falling back to Chocolatey-installed FFmpeg copy"
-            choco install ffmpeg -y
-            $ffmpegLibDir = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg"
-            if (-not (Test-Path $ffmpegLibDir)) {
-              throw "Chocolatey ffmpeg tools directory not found: $ffmpegLibDir"
-            }
-            $destDir = $outDir
-            if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
-            Copy-Item $ffmpegLibDir -Destination $destDir -Recurse -Force
-            if (-not (Test-Path "$destDir\bin\ffmpeg.exe") -or -not (Test-Path "$destDir\bin\ffprobe.exe")) {
-              throw "FFmpeg binaries not found after copy to packaging/ffmpeg"
-            }
-            return
-          }
-
-          # Clean any previous packaging/ffmpeg
+          
+          Write-Host "Downloading FFmpeg from: $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+          
+          $size = (Get-Item $zipPath).Length
+          Write-Host "Downloaded FFmpeg zip: $size bytes"
+          
           if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
-
-          # Extract to a temp folder, then move the inner folder's contents to packaging/ffmpeg
+          
           $temp = 'packaging\ffmpeg_temp'
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
+          
           Expand-Archive -Path $zipPath -DestinationPath $temp -Force
+          
+          # Find the inner folder
           $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           if (-not $inner) { throw "Failed to extract FFmpeg archive" }
+          
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
           Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
-
-          # Verify expected executables exist
-          if (-not (Test-Path "$outDir\bin\ffmpeg.exe") -or -not (Test-Path "$outDir\bin\ffprobe.exe")) {
-            throw "FFmpeg binaries not found after extraction to packaging/ffmpeg"
+          
+          # Verify ffmpeg executable exists (may be in root or bin subfolder)
+          if (-not ((Test-Path "$outDir\ffmpeg.exe") -or (Test-Path "$outDir\bin\ffmpeg.exe"))) {
+            throw "FFmpeg executables not found in extracted directory"
           }
-
+          
+          Write-Host "FFmpeg successfully extracted to packaging/ffmpeg"
+          
           # Cleanup
           Remove-Item $zipPath -Force
           Remove-Item $temp -Recurse -Force

@@ -69,10 +69,11 @@ datas = [
 ]
 
 # Optional FFmpeg directory for Windows builds.
-# Chocolatey ffmpeg.exe is a wrapper that needs the entire directory structure (bin/, lib/, etc.)
+# Includes the entire ffmpeg directory (from gyan.dev or other builds)
+# to preserve directory structure and any required dependencies.
 ffmpeg_dir = os.path.join(spec_dir, 'ffmpeg')
 if os.path.isdir(ffmpeg_dir):
-    # Include the entire ffmpeg directory to preserve relative paths the wrapper expects
+    # Include the entire ffmpeg directory (may have bin/, lib/, or direct executables)
     datas.append((ffmpeg_dir, 'ffmpeg'))
 
 
