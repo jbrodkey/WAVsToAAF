@@ -3224,8 +3224,25 @@ def launch_gui():
 
     root.mainloop()
 
+def _ensure_safe_stdout() -> None:
+    """Guard against invalid stdout/stderr in frozen Windows GUI builds."""
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return
+
+    try:
+        sys.stdout.write('')
+        sys.stdout.flush()
+        sys.stderr.write('')
+        sys.stderr.flush()
+    except Exception:
+        null_stream = open(os.devnull, 'w', encoding='utf-8', errors='ignore')
+        sys.stdout = null_stream
+        sys.stderr = null_stream
+
+
 def main():
     """Main entry point"""
+    _ensure_safe_stdout()
     # Handle --version flag
     if len(sys.argv) > 1 and sys.argv[1] in ('--version', '-v'):
         print(f"WAVsToAAF v{__version__}")
