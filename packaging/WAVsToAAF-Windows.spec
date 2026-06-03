@@ -68,13 +68,13 @@ datas = [
     (os.path.join(root_dir, 'docs', 'README_windows.md'), 'docs'),
 ]
 
-# Optional FFmpeg binaries for Windows builds.
+# Optional FFmpeg directory for Windows builds.
+# Chocolatey ffmpeg.exe is a wrapper that needs the entire directory structure (bin/, lib/, etc.)
 ffmpeg_dir = os.path.join(spec_dir, 'ffmpeg')
 if os.path.isdir(ffmpeg_dir):
-    for name in ('ffmpeg.exe', 'ffprobe.exe'):
-        path = os.path.join(ffmpeg_dir, name)
-        if os.path.exists(path):
-            datas.append((path, '.'))
+    # Include the entire ffmpeg directory to preserve relative paths the wrapper expects
+    datas.append((ffmpeg_dir, 'ffmpeg'))
+
 
 # Collect tkinterdnd2 resources if available (Windows drag-and-drop support)
 try:

@@ -170,6 +170,14 @@ if os.name == 'nt':
 def find_ffmpeg_executable() -> Optional[str]:
     """Return the path to ffmpeg if available, searching PATH and common install locations."""
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Check for bundled ffmpeg in ffmpeg/bin directory (Chocolatey structure)
+        for subdir in ('ffmpeg/bin', 'ffmpeg'):
+            for name in ('ffmpeg.exe', 'ffmpeg'):
+                candidate = os.path.join(sys._MEIPASS, subdir, name)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    return candidate
+        
+        # Also check root of bundle for direct ffmpeg placement
         for name in ('ffmpeg.exe', 'ffmpeg'):
             candidate = os.path.join(sys._MEIPASS, name)
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
@@ -181,6 +189,13 @@ def find_ffmpeg_executable() -> Optional[str]:
 
     if getattr(sys, 'frozen', False):
         exe_dir = os.path.dirname(sys.executable)
+        # Check exe directory and subdirectories
+        for subdir in ('ffmpeg/bin', 'ffmpeg'):
+            for name in ('ffmpeg.exe', 'ffmpeg'):
+                candidate = os.path.join(exe_dir, subdir, name)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    return candidate
+        
         for name in ('ffmpeg.exe', 'ffmpeg'):
             candidate = os.path.join(exe_dir, name)
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
