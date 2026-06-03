@@ -50,14 +50,18 @@ jobs:
           Write-Host "Attempting download of FFmpeg from $url"
           $downloaded = $false
 
-          # Try curl first (follows redirects reliably)
-          if (Get-Command curl -ErrorAction SilentlyContinue) {
-            Write-Host "Using curl to download"
+          # Try native curl.exe first (explicitly call curl.exe to avoid PowerShell alias)
+          if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            Write-Host "Using native curl.exe to download"
             try {
-              curl -L $url -o $zipPath
-              $downloaded = Test-Path $zipPath
+              & curl.exe -L $url -o $zipPath --fail --silent --show-error
+              if (Test-Path $zipPath) {
+                $size = (Get-Item $zipPath).Length
+                Write-Host "Downloaded file size: $size bytes"
+                if ($size -gt 1000) { $downloaded = $true } else { Write-Host "Downloaded file appears too small" }
+              }
             } catch {
-              Write-Host "curl download failed: $_"
+              Write-Host "curl.exe download failed: $_"
             }
           }
 
