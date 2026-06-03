@@ -116,7 +116,7 @@ jobs:
             Get-Content "$env:TEMP\wavtoaaf_startup.log"
           }
 
-      - name: Create distribution package (zip)
+      - name: Create distribution package
         shell: pwsh
         run: |
           $version = "${{ steps.get_version.outputs.version }}"
@@ -124,15 +124,12 @@ jobs:
           New-Item -ItemType Directory -Path "dist/$folderName" -Force
           Copy-Item dist/WAVsToAAF.exe "dist/$folderName/"
           Copy-Item docs/README_windows.md "dist/$folderName/"
-          cd dist
-          Compress-Archive -Path $folderName -DestinationPath "WAVsToAAF_v$version.zip"
-          Get-ChildItem -Force
 
-      - name: Upload zip package
+      - name: Upload distribution files as artifact
         uses: actions/upload-artifact@v6
         with:
-          name: WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
-          path: dist/WAVsToAAF_v${{ steps.get_version.outputs.version }}.zip
+          name: WAVsToAAF_v${{ steps.get_version.outputs.version }}
+          path: dist/WAVsToAAF/*
 
       - name: Validate Windows build
         shell: cmd

@@ -2220,11 +2220,23 @@ class WAVsToAAFProcessor:
         # Create output directory
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Find WAV files
+        # Find WAV files (deduplicate case-insensitive matches)
         wav_files = []
         for ext in self.extractor.supported_formats:
             wav_files.extend(input_path.glob(f"**/*{ext}"))
             wav_files.extend(input_path.glob(f"**/*{ext.upper()}"))
+        # Deduplicate while preserving order
+        seen = set()
+        unique_wavs = []
+        for p in wav_files:
+            try:
+                key = str(p.resolve())
+            except Exception:
+                key = str(p)
+            if key not in seen:
+                seen.add(key)
+                unique_wavs.append(p)
+        wav_files = unique_wavs
 
         if not wav_files:
             print(f"No WAV files found in '{input_dir}'")
