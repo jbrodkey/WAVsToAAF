@@ -43,37 +43,45 @@ jobs:
       - name: Download lightweight FFmpeg (gyan.dev) for bundling
         shell: pwsh
         run: |
-          # Use gyan.dev which offers lightweight FFmpeg builds (like MXtoAAF does)
-          $baseUrl = 'https://www.gyan.dev/ffmpeg/builds'
+          # gyan.dev hosts lightweight FFmpeg builds
+          # Use a direct approach: the 'full' builds are at a predictable pattern
           $zipPath = 'packaging\ffmpeg.zip'
           $outDir = 'packaging\ffmpeg'
 
-          Write-Host "Fetching latest FFmpeg build from gyan.dev"
-          $buildPage = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing
+          # Try direct full-build download with curl (follows redirects automatically)
+          Write-Host "Downloading FFmpeg full build from gyan.dev"
           
-          # Look for 'full' build (includes essentials, smaller than 'release')
-          $fullLink = $buildPage.Links | Where-Object { $_.href -match 'ffmpeg-full.*\.zip$' } | Select-Object -First 1
+          # gyan.dev serves latest builds at this pattern (full = lighter than release)
+          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-full-latest.zip'
           
-          if (-not $fullLink) {
-            throw "Could not find FFmpeg build link on gyan.dev"
+          if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            Write-Host "Downloading with curl.exe from: $url"
+            & curl.exe -L -o $zipPath --retry 3 --retry-delay 2 "$url"
+            $downloaded = Test-Path $zipPath
+          } else {
+            Write-Host "curl.exe not available, using Invoke-WebRequest"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+              $downloaded = Test-Path $zipPath
+            } catch {
+              Write-Host "Invoke-WebRequest failed: $_"
+              $downloaded = $false
+            }
           }
-          
-          $url = $fullLink.href
-          if (-not $url.StartsWith('http')) {
-            $url = $baseUrl + '/' + $url
+
+          if (-not $downloaded -or (Get-Item $zipPath).Length -lt 1MB) {
+            throw "Failed to download FFmpeg or file too small"
           }
-          
-          Write-Host "Downloading FFmpeg from: $url"
-          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
           
           $size = (Get-Item $zipPath).Length
-          Write-Host "Downloaded FFmpeg zip: $size bytes"
+          Write-Host "Downloaded FFmpeg zip: $([math]::Round($size/1MB, 2)) MB"
           
           if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
           
           $temp = 'packaging\ffmpeg_temp'
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           
+          Write-Host "Extracting FFmpeg archive..."
           Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           
           # Find the inner folder
@@ -84,8 +92,12 @@ jobs:
           Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
           
           # Verify ffmpeg executable exists (may be in root or bin subfolder)
-          if (-not ((Test-Path "$outDir\ffmpeg.exe") -or (Test-Path "$outDir\bin\ffmpeg.exe"))) {
-            throw "FFmpeg executables not found in extracted directory"
+          $found = $false
+          if (Test-Path "$outDir\ffmpeg.exe") { $found = $true; Write-Host "Found ffmpeg.exe in root" }
+          if (Test-Path "$outDir\bin\ffmpeg.exe") { $found = $true; Write-Host "Found ffmpeg.exe in bin/" }
+          
+          if (-not $found) {
+            throw "FFmpeg executable not found after extraction"
           }
           
           Write-Host "FFmpeg successfully extracted to packaging/ffmpeg"
