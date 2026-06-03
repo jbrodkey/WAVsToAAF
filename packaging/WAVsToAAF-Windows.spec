@@ -74,11 +74,17 @@ try:
 except Exception:
     datas_tk, binaries_tk, hiddenimports_tk = [], [], []
 
+# Collect AAF package resources to ensure all lazily imported aaf2 modules are included.
+try:
+    datas_aaf2, binaries_aaf2, hiddenimports_aaf2 = collect_all('aaf2')
+except Exception:
+    datas_aaf2, binaries_aaf2, hiddenimports_aaf2 = [], [], []
+
 a = Analysis(
     [os.path.join(spec_dir, 'startup_wrapper.py')],
     pathex=[root_dir],
-    binaries=binaries_tk,
-    datas=datas + datas_tk,
+    binaries=binaries_tk + binaries_aaf2,
+    datas=datas + datas_tk + datas_aaf2,
     hiddenimports=[
         'tkinter',
         'tkinter.ttk',
@@ -99,7 +105,7 @@ a = Analysis(
         'struct',
         'io',
         'tkinterdnd2',
-    ] + hiddenimports_tk,
+    ] + hiddenimports_tk + hiddenimports_aaf2,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
