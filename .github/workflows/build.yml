@@ -40,22 +40,37 @@ jobs:
           pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Install FFmpeg for bundling
+      - name: Download lightweight FFmpeg (release-essentials) for bundling
         shell: pwsh
         run: |
-          choco install ffmpeg -y
-          # Chocolatey ffmpeg.exe is a wrapper that needs the entire lib directory structure
-          $ffmpegLibDir = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg"
-          if (-not (Test-Path $ffmpegLibDir)) {
-            throw "Chocolatey ffmpeg tools directory not found: $ffmpegLibDir"
+          # Use a small static "release-essentials" build from BtbN GitHub Releases
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-release-essentials.zip'
+          $zipPath = 'packaging\ffmpeg.zip'
+          $outDir = 'packaging\ffmpeg'
+
+          Write-Host "Downloading FFmpeg from $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+
+          # Clean any previous packaging/ffmpeg
+          if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
+
+          # Extract to a temp folder, then move the inner folder's contents to packaging/ffmpeg
+          $temp = 'packaging\ffmpeg_temp'
+          if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
+          Expand-Archive -Path $zipPath -DestinationPath $temp -Force
+          $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          if (-not $inner) { throw "Failed to extract FFmpeg archive" }
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
+
+          # Verify expected executables exist
+          if (-not (Test-Path "$outDir\bin\ffmpeg.exe") -or -not (Test-Path "$outDir\bin\ffprobe.exe")) {
+            throw "FFmpeg binaries not found after extraction to packaging/ffmpeg"
           }
-          $destDir = "packaging\ffmpeg"
-          # Copy the entire ffmpeg directory (bin, lib, etc.) to preserve relative paths
-          Copy-Item $ffmpegLibDir -Destination $destDir -Recurse -Force
-          # Verify the copy worked
-          if (-not (Test-Path "$destDir\bin\ffmpeg.exe") -or -not (Test-Path "$destDir\bin\ffprobe.exe")) {
-            throw "FFmpeg binaries not found after copy to packaging/ffmpeg"
-          }
+
+          # Cleanup
+          Remove-Item $zipPath -Force
+          Remove-Item $temp -Recurse -Force
 
       - name: Clean previous builds
         shell: pwsh
