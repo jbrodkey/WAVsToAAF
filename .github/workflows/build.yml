@@ -40,71 +40,39 @@ jobs:
           pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Download lightweight FFmpeg (gyan.dev) for bundling
+      - name: Install and bundle FFmpeg
         shell: pwsh
         run: |
-          # gyan.dev hosts lightweight FFmpeg builds
-          # Use a direct approach: the 'full' builds are at a predictable pattern
-          $zipPath = 'packaging\ffmpeg.zip'
-          $outDir = 'packaging\ffmpeg'
-
-          # Try direct full-build download with curl (follows redirects automatically)
-          Write-Host "Downloading FFmpeg full build from gyan.dev"
+          $outDir = 'packaging\ffmpeg\bin'
           
-          # gyan.dev serves latest builds at this pattern (full = lighter than release)
-          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-full-latest.zip'
+          Write-Host "Installing FFmpeg via Chocolatey..."
+          choco install ffmpeg -y
           
-          if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            Write-Host "Downloading with curl.exe from: $url"
-            & curl.exe -L -o $zipPath --retry 3 --retry-delay 2 "$url"
-            $downloaded = Test-Path $zipPath
-          } else {
-            Write-Host "curl.exe not available, using Invoke-WebRequest"
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-              $downloaded = Test-Path $zipPath
-            } catch {
-              Write-Host "Invoke-WebRequest failed: $_"
-              $downloaded = $false
-            }
-          }
-
-          if (-not $downloaded -or (Get-Item $zipPath).Length -lt 1MB) {
-            throw "Failed to download FFmpeg or file too small"
+          # After choco install, ffmpeg becomes available in PATH
+          $ffmpegPath = (where.exe ffmpeg 2>$null | Select-Object -First 1)
+          $ffprobePath = (where.exe ffprobe 2>$null | Select-Object -First 1)
+          
+          if (-not $ffmpegPath -or -not $ffprobePath) {
+            throw "FFmpeg binaries not found in PATH after Chocolatey install"
           }
           
-          $size = (Get-Item $zipPath).Length
-          Write-Host "Downloaded FFmpeg zip: $([math]::Round($size/1MB, 2)) MB"
+          Write-Host "Found ffmpeg: $ffmpegPath"
+          Write-Host "Found ffprobe: $ffprobePath"
           
-          if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
-          
-          $temp = 'packaging\ffmpeg_temp'
-          if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
-          
-          Write-Host "Extracting FFmpeg archive..."
-          Expand-Archive -Path $zipPath -DestinationPath $temp -Force
-          
-          # Find the inner folder
-          $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
-          if (-not $inner) { throw "Failed to extract FFmpeg archive" }
-          
+          # Create output directory and copy just the executables
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-          Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
+          Copy-Item $ffmpegPath $outDir -Force
+          Copy-Item $ffprobePath $outDir -Force
           
-          # Verify ffmpeg executable exists (may be in root or bin subfolder)
-          $found = $false
-          if (Test-Path "$outDir\ffmpeg.exe") { $found = $true; Write-Host "Found ffmpeg.exe in root" }
-          if (Test-Path "$outDir\bin\ffmpeg.exe") { $found = $true; Write-Host "Found ffmpeg.exe in bin/" }
-          
-          if (-not $found) {
-            throw "FFmpeg executable not found after extraction"
+          # Verify
+          if (-not (Test-Path "$outDir\ffmpeg.exe") -or -not (Test-Path "$outDir\ffprobe.exe")) {
+            throw "Failed to copy FFmpeg binaries"
           }
           
-          Write-Host "FFmpeg successfully extracted to packaging/ffmpeg"
-          
-          # Cleanup
-          Remove-Item $zipPath -Force
-          Remove-Item $temp -Recurse -Force
+          $ffmpegSize = (Get-Item "$outDir\ffmpeg.exe").Length
+          $ffprobeSize = (Get-Item "$outDir\ffprobe.exe").Length
+          Write-Host "Bundled ffmpeg.exe: $('{0:N0}' -f $ffmpegSize) bytes"
+          Write-Host "Bundled ffprobe.exe: $('{0:N0}' -f $ffprobeSize) bytes"
 
       - name: Clean previous builds
         shell: pwsh
