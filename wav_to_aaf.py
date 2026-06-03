@@ -208,6 +208,12 @@ def convert_to_wav(src_path: str, dst_path: str, samplerate: int = 48000, bits: 
             "On Windows, add ffmpeg.exe to PATH or install via Chocolatey: choco install ffmpeg."
         )
 
+    # Validate ffmpeg file before execution
+    if not os.path.isfile(ffmpeg_path):
+        raise FileNotFoundError(f"ffmpeg executable not found: {ffmpeg_path}")
+    if not os.access(ffmpeg_path, os.X_OK):
+        raise PermissionError(f"ffmpeg is not executable: {ffmpeg_path}")
+
     codec = "pcm_s24le" if bits == 24 else "pcm_s16le"
     cmd = [
         ffmpeg_path,
@@ -224,10 +230,18 @@ def convert_to_wav(src_path: str, dst_path: str, samplerate: int = 48000, bits: 
     cmd.extend(["-acodec", codec, dst_path])
 
     # Run ffmpeg and capture stderr for diagnostics (especially in frozen builds)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except Exception as e:
+        raise RuntimeError(f"ffmpeg execution failed: {e}")
+    
     if proc.returncode != 0:
-        stderr = proc.stderr.strip() if proc.stderr else ''
-        raise RuntimeError(f"ffmpeg failed (code {proc.returncode}): {stderr}")
+        stderr = proc.stderr.strip() if proc.stderr else '(no stderr)'
+        stdout = proc.stdout.strip() if proc.stdout else ''
+        error_msg = f"ffmpeg failed (code {proc.returncode}): {stderr}"
+        if stdout:
+            error_msg += f"\nstdout: {stdout}"
+        raise RuntimeError(error_msg)
 
 
 def create_deterministic_umid(wav_path: Path, mob_type: str = "master", tape_mode: bool = False) -> aaf2.mobid.MobID:
