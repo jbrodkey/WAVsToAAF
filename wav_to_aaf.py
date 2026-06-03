@@ -223,7 +223,11 @@ def convert_to_wav(src_path: str, dst_path: str, samplerate: int = 48000, bits: 
         cmd.extend(["-ac", str(channels)])
     cmd.extend(["-acodec", codec, dst_path])
 
-    subprocess.run(cmd, check=True)
+    # Run ffmpeg and capture stderr for diagnostics (especially in frozen builds)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip() if proc.stderr else ''
+        raise RuntimeError(f"ffmpeg failed (code {proc.returncode}): {stderr}")
 
 
 def create_deterministic_umid(wav_path: Path, mob_type: str = "master", tape_mode: bool = False) -> aaf2.mobid.MobID:
