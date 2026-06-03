@@ -65,10 +65,33 @@ jobs:
           if (-not (Test-Path $exePath)) {
             throw "Built executable not found: $exePath"
           }
-          $versionOut = & $exePath --version
-          Write-Host "WAVsToAAF --version output:"
-          Write-Host $versionOut
-          if ($LASTEXITCODE -ne 0) {
+          Write-Host "Dist contents:"
+          Get-ChildItem dist -Recurse | Sort-Object Length | Format-Table Name,Length
+
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exePath
+          $psi.Arguments = "--version"
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+
+          $process = [System.Diagnostics.Process]::Start($psi)
+          $stdout = $process.StandardOutput.ReadToEnd()
+          $stderr = $process.StandardError.ReadToEnd()
+          $process.WaitForExit()
+
+          Write-Host "WAVsToAAF --version stdout:"
+          Write-Host $stdout
+          Write-Host "WAVsToAAF --version stderr:"
+          Write-Host $stderr
+          Write-Host "WAVsToAAF --version exit code: $($process.ExitCode)"
+
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path "$env:TEMP\wavtoaaf_startup.log") {
+              Write-Host "Startup wrapper log found:"
+              Get-Content "$env:TEMP\wavtoaaf_startup.log"
+            }
             throw "WAVsToAAF.exe returned non-zero exit code"
           }
           if (Test-Path "$env:TEMP\wavtoaaf_startup.log") {
