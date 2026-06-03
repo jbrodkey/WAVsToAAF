@@ -68,6 +68,14 @@ datas = [
     (os.path.join(root_dir, 'docs', 'README_windows.md'), 'docs'),
 ]
 
+# Optional FFmpeg binaries for Windows builds.
+ffmpeg_dir = os.path.join(spec_dir, 'ffmpeg')
+if os.path.isdir(ffmpeg_dir):
+    for name in ('ffmpeg.exe', 'ffprobe.exe'):
+        path = os.path.join(ffmpeg_dir, name)
+        if os.path.exists(path):
+            datas.append((path, '.'))
+
 # Collect tkinterdnd2 resources if available (Windows drag-and-drop support)
 try:
     datas_tk, binaries_tk, hiddenimports_tk = collect_all('tkinterdnd2')

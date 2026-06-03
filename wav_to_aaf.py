@@ -169,9 +169,22 @@ if os.name == 'nt':
 
 def find_ffmpeg_executable() -> Optional[str]:
     """Return the path to ffmpeg if available, searching PATH and common install locations."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        for name in ('ffmpeg.exe', 'ffmpeg'):
+            candidate = os.path.join(sys._MEIPASS, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         return ffmpeg_path
+
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        for name in ('ffmpeg.exe', 'ffmpeg'):
+            candidate = os.path.join(exe_dir, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
 
     for path in COMMON_FFMPEG_PATHS:
         if os.path.isfile(path) and os.access(path, os.X_OK):

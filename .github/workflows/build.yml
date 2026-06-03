@@ -40,6 +40,21 @@ jobs:
           pip install -r requirements.txt
           python -m pip install pyinstaller
 
+      - name: Install FFmpeg for bundling
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y
+          $ffmpegBinDir = "C:\ProgramData\chocolatey\bin"
+          $ffmpegPath = Join-Path $ffmpegBinDir "ffmpeg.exe"
+          $ffprobePath = Join-Path $ffmpegBinDir "ffprobe.exe"
+          if (-not (Test-Path $ffmpegPath) -or -not (Test-Path $ffprobePath)) {
+            throw "FFmpeg binaries not found after install"
+          }
+          $destDir = "packaging\ffmpeg"
+          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+          Copy-Item $ffmpegPath -Destination $destDir -Force
+          Copy-Item $ffprobePath -Destination $destDir -Force
+
       - name: Clean previous builds
         shell: pwsh
         run: |
