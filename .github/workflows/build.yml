@@ -43,36 +43,25 @@ jobs:
       - name: Install and bundle FFmpeg
         shell: pwsh
         run: |
-          $outDir = 'packaging\ffmpeg\bin'
-          
           Write-Host "Installing FFmpeg via Chocolatey..."
           choco install ffmpeg -y
-          
-          # After choco install, ffmpeg becomes available in PATH
-          $ffmpegPath = (where.exe ffmpeg 2>$null | Select-Object -First 1)
-          $ffprobePath = (where.exe ffprobe 2>$null | Select-Object -First 1)
-          
-          if (-not $ffmpegPath -or -not $ffprobePath) {
-            throw "FFmpeg binaries not found in PATH after Chocolatey install"
+
+          $ffmpegLibDir = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg"
+          if (-not (Test-Path $ffmpegLibDir)) {
+            throw "Chocolatey ffmpeg tools directory not found: $ffmpegLibDir"
           }
-          
-          Write-Host "Found ffmpeg: $ffmpegPath"
-          Write-Host "Found ffprobe: $ffprobePath"
-          
-          # Create output directory and copy just the executables
-          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-          Copy-Item $ffmpegPath $outDir -Force
-          Copy-Item $ffprobePath $outDir -Force
-          
-          # Verify
-          if (-not (Test-Path "$outDir\ffmpeg.exe") -or -not (Test-Path "$outDir\ffprobe.exe")) {
-            throw "Failed to copy FFmpeg binaries"
+
+          $destDir = "packaging\ffmpeg"
+          if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+
+          Write-Host "Copying FFmpeg from Chocolatey to packaging/ffmpeg..."
+          Copy-Item $ffmpegLibDir -Destination $destDir -Recurse -Force
+
+          if (-not ((Test-Path "$destDir\bin\ffmpeg.exe") -or (Test-Path "$destDir\ffmpeg.exe"))) {
+            throw "FFmpeg binaries not found after copy"
           }
-          
-          $ffmpegSize = (Get-Item "$outDir\ffmpeg.exe").Length
-          $ffprobeSize = (Get-Item "$outDir\ffprobe.exe").Length
-          Write-Host "Bundled ffmpeg.exe: $('{0:N0}' -f $ffmpegSize) bytes"
-          Write-Host "Bundled ffprobe.exe: $('{0:N0}' -f $ffprobeSize) bytes"
+
+          Write-Host "FFmpeg successfully bundled to packaging/ffmpeg"
 
       - name: Clean previous builds
         shell: pwsh
