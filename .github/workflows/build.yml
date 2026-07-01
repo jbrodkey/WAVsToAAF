@@ -40,28 +40,45 @@ jobs:
           pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Install and bundle FFmpeg
+      - name: Download and bundle FFmpeg
         shell: pwsh
         run: |
-          Write-Host "Installing FFmpeg via Chocolatey..."
-          choco install ffmpeg -y
+          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+          $zipPath = 'packaging\ffmpeg.zip'
+          $outDir = 'packaging\ffmpeg'
 
-          $ffmpegLibDir = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg"
-          if (-not (Test-Path $ffmpegLibDir)) {
-            throw "Chocolatey ffmpeg tools directory not found: $ffmpegLibDir"
+          Write-Host "Downloading FFmpeg from $url"
+          if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -L $url -o $zipPath --fail --silent --show-error
+          } else {
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
           }
 
-          $destDir = "packaging\ffmpeg"
-          if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+          if (-not (Test-Path $zipPath)) {
+            throw "FFmpeg download failed"
+          }
+          
+          $size = (Get-Item $zipPath).Length
+          Write-Host "Downloaded FFmpeg zip size: $size bytes"
 
-          Write-Host "Copying FFmpeg from Chocolatey to packaging/ffmpeg..."
-          Copy-Item $ffmpegLibDir -Destination $destDir -Recurse -Force
+          if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
+          $temp = 'packaging\ffmpeg_temp'
+          if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
+          Expand-Archive -Path $zipPath -DestinationPath $temp -Force
 
-          if (-not ((Test-Path "$destDir\bin\ffmpeg.exe") -or (Test-Path "$destDir\ffmpeg.exe"))) {
-            throw "FFmpeg binaries not found after copy"
+          $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          if (-not $inner) { throw "Failed to extract FFmpeg archive" }
+
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
+
+          if (-not ((Test-Path "$outDir\bin\ffmpeg.exe") -or (Test-Path "$outDir\ffmpeg.exe"))) {
+            throw "FFmpeg binaries not found after extraction"
           }
 
           Write-Host "FFmpeg successfully bundled to packaging/ffmpeg"
+          Remove-Item $zipPath -Force
+          Remove-Item $temp -Recurse -Force
 
       - name: Clean previous builds
         shell: pwsh
