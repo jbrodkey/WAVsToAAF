@@ -74,12 +74,15 @@ jobs:
           # Try extracting with 7z; install via Chocolatey if missing and refresh environment
           $extracted = $false
           if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-            Write-Host "7z.exe found in PATH; extracting"
-            & 7z.exe x $archivePath -o$temp -y | Out-Host
-            if ($LASTEXITCODE -eq 0) {
+            Write-Host "7z.exe found in PATH; extracting into $temp"
+            Push-Location $temp
+            & 7z.exe x $archivePath -y | Out-Host
+            $rc = $LASTEXITCODE
+            Pop-Location
+            if ($rc -eq 0) {
               $extracted = $true
             } else {
-              Write-Host "7z.exe extraction failed with exit code $LASTEXITCODE"
+              Write-Host "7z.exe extraction failed with exit code $rc"
             }
           } else {
             Write-Host "7z.exe not found, attempting to install 7zip.commandline via Chocolatey"
@@ -91,12 +94,15 @@ jobs:
               $env:PATH = $env:PATH + ';C:\ProgramData\chocolatey\bin'
             }
             if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-              Write-Host "7z.exe now available; extracting"
-              & 7z.exe x $archivePath -o$temp -y | Out-Host
-              if ($LASTEXITCODE -eq 0) {
+              Write-Host "7z.exe now available; extracting into $temp"
+              Push-Location $temp
+              & 7z.exe x $archivePath -y | Out-Host
+              $rc = $LASTEXITCODE
+              Pop-Location
+              if ($rc -eq 0) {
                 $extracted = $true
               } else {
-                Write-Host "7z.exe extraction failed with exit code $LASTEXITCODE"
+                Write-Host "7z.exe extraction failed with exit code $rc"
               }
             } else {
               Write-Host "7z.exe still not available after Chocolatey install"
