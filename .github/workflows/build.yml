@@ -44,8 +44,9 @@ jobs:
         shell: pwsh
         run: |
           $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z'
-          $archivePath = 'packaging\ffmpeg.7z'
-          $outDir = 'packaging\ffmpeg'
+          $root = (Get-Location).Path
+          $archivePath = Join-Path $root 'packaging\ffmpeg.7z'
+          $outDir = Join-Path $root 'packaging\ffmpeg'
 
           Write-Host "Downloading FFmpeg from $url"
           if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
@@ -62,7 +63,7 @@ jobs:
           Write-Host "Downloaded FFmpeg archive size: $size bytes"
 
           if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
-          $temp = 'packaging\ffmpeg_temp'
+          $temp = Join-Path $root 'packaging\ffmpeg_temp'
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           New-Item -ItemType Directory -Path $temp -Force | Out-Null
 
