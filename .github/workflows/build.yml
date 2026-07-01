@@ -43,28 +43,41 @@ jobs:
       - name: Download and bundle FFmpeg
         shell: pwsh
         run: |
-          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
-          $zipPath = 'packaging\ffmpeg.zip'
+          $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z'
+          $archivePath = 'packaging\ffmpeg.7z'
           $outDir = 'packaging\ffmpeg'
 
           Write-Host "Downloading FFmpeg from $url"
           if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-            & curl.exe -L $url -o $zipPath --fail --silent --show-error
+            & curl.exe -L $url -o $archivePath --fail --silent --show-error
           } else {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+            Invoke-WebRequest -Uri $url -OutFile $archivePath -UseBasicParsing
           }
 
-          if (-not (Test-Path $zipPath)) {
+          if (-not (Test-Path $archivePath)) {
             throw "FFmpeg download failed"
           }
-          
-          $size = (Get-Item $zipPath).Length
-          Write-Host "Downloaded FFmpeg zip size: $size bytes"
+
+          $size = (Get-Item $archivePath).Length
+          Write-Host "Downloaded FFmpeg archive size: $size bytes"
 
           if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
           $temp = 'packaging\ffmpeg_temp'
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
-          Expand-Archive -Path $zipPath -DestinationPath $temp -Force
+          New-Item -ItemType Directory -Path $temp -Force | Out-Null
+
+          $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          if (-not $sevenZip) {
+            Write-Host "7z.exe not found, installing 7zip.commandline via Chocolatey"
+            choco install 7zip.commandline -y
+            $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          }
+
+          if (-not $sevenZip) {
+            throw "7z.exe is required to extract 7z archives"
+          }
+
+          & $sevenZip.Source x $archivePath -o$temp -y | Out-Null
 
           $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           if (-not $inner) { throw "Failed to extract FFmpeg archive" }
@@ -77,7 +90,7 @@ jobs:
           }
 
           Write-Host "FFmpeg successfully bundled to packaging/ffmpeg"
-          Remove-Item $zipPath -Force
+          Remove-Item $archivePath -Force
           Remove-Item $temp -Recurse -Force
 
       - name: Clean previous builds
