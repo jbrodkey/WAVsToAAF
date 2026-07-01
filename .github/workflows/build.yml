@@ -67,94 +67,38 @@ jobs:
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           New-Item -ItemType Directory -Path $temp -Force | Out-Null
 
-          Write-Host "Current working directory: $(Get-Location)"
-          Write-Host "Packaging directory listing (top 200):"
-          if (Test-Path 'packaging') { Get-ChildItem packaging -Recurse -Force | Select-Object -First 200 | ForEach-Object { Write-Host $_.FullName } } else { Write-Host "packaging folder not present" }
-
           # Try extracting with 7z; install via Chocolatey if missing and refresh environment
           $extracted = $false
           if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-            Write-Host "7z.exe found in PATH; extracting into $temp"
             Push-Location $temp
             & 7z.exe x $archivePath -y | Out-Host
             $rc = $LASTEXITCODE
             Pop-Location
-            if ($rc -eq 0) {
-              $extracted = $true
-            } else {
-              Write-Host "7z.exe extraction failed with exit code $rc"
-            }
+            if ($rc -eq 0) { $extracted = $true }
           } else {
-            Write-Host "7z.exe not found, attempting to install 7zip.commandline via Chocolatey"
             choco install 7zip.commandline -y || Write-Host "choco install returned non-zero"
-            # Refresh environment so PATH changes are visible in this session
-            if (Get-Command refreshenv -ErrorAction SilentlyContinue) {
-              refreshenv | Out-Null
-            } else {
-              $env:PATH = $env:PATH + ';C:\ProgramData\chocolatey\bin'
-            }
+            if (Get-Command refreshenv -ErrorAction SilentlyContinue) { refreshenv | Out-Null } else { $env:PATH = $env:PATH + ';C:\ProgramData\chocolatey\bin' }
             if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-              Write-Host "7z.exe now available; extracting into $temp"
               Push-Location $temp
               & 7z.exe x $archivePath -y | Out-Host
               $rc = $LASTEXITCODE
               Pop-Location
-              if ($rc -eq 0) {
-                $extracted = $true
-              } else {
-                Write-Host "7z.exe extraction failed with exit code $rc"
-              }
-            } else {
-              Write-Host "7z.exe still not available after Chocolatey install"
+              if ($rc -eq 0) { $extracted = $true }
             }
           }
 
           # Fallback to ZIP if 7z extraction failed
           $zipPath = 'packaging\ffmpeg.zip'
           if (-not $extracted) {
-            Write-Host "7z extraction failed; falling back to zip release package"
             Remove-Item -Force -ErrorAction SilentlyContinue $archivePath
             $urlZip = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
-            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-              & curl.exe -L $urlZip -o $zipPath --fail --silent --show-error
-            } else {
-              Invoke-WebRequest -Uri $urlZip -OutFile $zipPath -UseBasicParsing
-            }
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) { & curl.exe -L $urlZip -o $zipPath --fail --silent --show-error } else { Invoke-WebRequest -Uri $urlZip -OutFile $zipPath -UseBasicParsing }
             if (-not (Test-Path $zipPath)) { throw "Fallback FFmpeg zip download failed" }
-            Write-Host "Extracting ZIP fallback"
             Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           }
 
-          Write-Host "Listing extracted temporary folder: $temp"
-          Get-ChildItem -Path $temp -Recurse -Force | Select-Object -First 200 | ForEach-Object { Write-Host $_.FullName }
-
-          Write-Host "Also running native dir to be safe:" 
-          cmd /c "dir $temp /s" | ForEach-Object { Write-Host $_ }
-
-          if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
-            Write-Host "Listing archive contents via 7z:" 
-            & 7z.exe l $archivePath | Select-Object -First 200 | ForEach-Object { Write-Host $_ }
-            # Try to parse the first top-level folder from the archive listing
-            $listing = & 7z.exe l $archivePath
-            $firstPathLine = $listing | Where-Object { $_ -match "^[^ ]" } | ForEach-Object { $_.Trim() } | Select-Object -First 1
-            if ($firstPathLine) {
-              $candidateTop = ($firstPathLine -split '[\\/]')[0]
-              Write-Host "Candidate top-level folder from archive: $candidateTop"
-              $candidatePath = Join-Path $temp $candidateTop
-              Write-Host "Checking candidate path: $candidatePath"
-              if (Test-Path (Join-Path $candidatePath 'bin\ffmpeg.exe')) {
-                Write-Host "Found ffmpeg at candidate path/bin/ffmpeg.exe"
-                $ffmpegFile = Get-Item (Join-Path $candidatePath 'bin\ffmpeg.exe')
-              } elseif (Test-Path (Join-Path $candidatePath 'ffmpeg.exe')) {
-                Write-Host "Found ffmpeg at candidate path/ffmpeg.exe"
-                $ffmpegFile = Get-Item (Join-Path $candidatePath 'ffmpeg.exe')
-              }
-            }
-          }
-
-          if (-not $ffmpegFile) {
-            $ffmpegFile = Get-ChildItem -Path $temp -Recurse -File -Filter ffmpeg.exe | Select-Object -First 1
-          }
+          # Locate ffmpeg.exe under the temp extraction directory
+          $ffmpegFile = Get-ChildItem -Path $temp -Recurse -File -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $ffmpegFile) {
             throw "FFmpeg binaries not found after extraction"
           }
