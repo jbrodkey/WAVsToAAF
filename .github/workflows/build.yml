@@ -115,11 +115,11 @@ jobs:
           }
 
           $inner = Get-ChildItem -Path $temp -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName 'bin\ffmpeg.exe') -or Test-Path (Join-Path $_.FullName 'ffmpeg.exe')
+            (Test-Path (Join-Path $_.FullName 'bin\ffmpeg.exe')) -or (Test-Path (Join-Path $_.FullName 'ffmpeg.exe'))
           } | Select-Object -First 1
 
           if (-not $inner) {
-            if (Test-Path "$temp\bin\ffmpeg.exe" -or Test-Path "$temp\ffmpeg.exe") {
+            if ((Test-Path "$temp\bin\ffmpeg.exe") -or (Test-Path "$temp\ffmpeg.exe")) {
               $inner = Get-Item $temp
             } else {
               $inner = Get-ChildItem -Path $temp -Directory | Select-Object -First 1
