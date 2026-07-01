@@ -114,6 +114,9 @@ jobs:
             Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           }
 
+          Write-Host "Listing extracted temporary folder: $temp"
+          Get-ChildItem -Path $temp -Recurse -Force | Select-Object -First 200 | ForEach-Object { Write-Host $_.FullName }
+
           $ffmpegFile = Get-ChildItem -Path $temp -Recurse -File -Filter ffmpeg.exe | Select-Object -First 1
           if (-not $ffmpegFile) {
             throw "FFmpeg binaries not found after extraction"
