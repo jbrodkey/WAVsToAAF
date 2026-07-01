@@ -114,7 +114,21 @@ jobs:
             Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           }
 
-          $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          $inner = Get-ChildItem $temp | Where-Object {
+            $_.PSIsContainer -and (
+              Test-Path (Join-Path $_.FullName 'bin\ffmpeg.exe') -or
+              Test-Path (Join-Path $_.FullName 'ffmpeg.exe')
+            )
+          } | Select-Object -First 1
+
+          if (-not $inner) {
+            if (Test-Path "$temp\bin\ffmpeg.exe" -or Test-Path "$temp\ffmpeg.exe") {
+              $inner = Get-Item $temp
+            } else {
+              $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+            }
+          }
+
           if (-not $inner) { throw "Failed to extract FFmpeg archive" }
 
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
