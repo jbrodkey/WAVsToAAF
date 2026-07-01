@@ -114,22 +114,19 @@ jobs:
             Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           }
 
-          $inner = Get-ChildItem -Path $temp -Directory | Where-Object {
-            (Test-Path (Join-Path $_.FullName 'bin\ffmpeg.exe')) -or (Test-Path (Join-Path $_.FullName 'ffmpeg.exe'))
-          } | Select-Object -First 1
-
-          if (-not $inner) {
-            if ((Test-Path "$temp\bin\ffmpeg.exe") -or (Test-Path "$temp\ffmpeg.exe")) {
-              $inner = Get-Item $temp
-            } else {
-              $inner = Get-ChildItem -Path $temp -Directory | Select-Object -First 1
-            }
+          $ffmpegFile = Get-ChildItem -Path $temp -Recurse -File -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ffmpegFile) {
+            throw "FFmpeg binaries not found after extraction"
           }
 
-          if (-not $inner) { throw "Failed to extract FFmpeg archive" }
+          if ($ffmpegFile.Directory.Name -ieq 'bin') {
+            $inner = $ffmpegFile.Directory.Parent.FullName
+          } else {
+            $inner = $ffmpegFile.Directory.FullName
+          }
 
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-          Move-Item -Path (Join-Path $inner.FullName '*') -Destination $outDir -Force
+          Move-Item -Path (Join-Path $inner '*') -Destination $outDir -Force
 
           if (-not ((Test-Path "$outDir\bin\ffmpeg.exe") -or (Test-Path "$outDir\ffmpeg.exe"))) {
             throw "FFmpeg binaries not found after extraction"
