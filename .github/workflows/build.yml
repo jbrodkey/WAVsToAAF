@@ -71,7 +71,11 @@ jobs:
           if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
             Write-Host "7z.exe found in PATH; extracting"
             & 7z.exe x $archivePath -o$temp -y | Out-Host
-            if ($LASTEXITCODE -eq 0) { $extracted = $true }
+            if ($LASTEXITCODE -eq 0) {
+              $extracted = $true
+            } else {
+              Write-Host "7z.exe extraction failed with exit code $LASTEXITCODE"
+            }
           } else {
             Write-Host "7z.exe not found, attempting to install 7zip.commandline via Chocolatey"
             choco install 7zip.commandline -y || Write-Host "choco install returned non-zero"
@@ -84,7 +88,11 @@ jobs:
             if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
               Write-Host "7z.exe now available; extracting"
               & 7z.exe x $archivePath -o$temp -y | Out-Host
-              if ($LASTEXITCODE -eq 0) { $extracted = $true }
+              if ($LASTEXITCODE -eq 0) {
+                $extracted = $true
+              } else {
+                Write-Host "7z.exe extraction failed with exit code $LASTEXITCODE"
+              }
             } else {
               Write-Host "7z.exe still not available after Chocolatey install"
             }
