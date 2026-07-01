@@ -66,18 +66,45 @@ jobs:
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           New-Item -ItemType Directory -Path $temp -Force | Out-Null
 
-          $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
-          if (-not $sevenZip) {
-            Write-Host "7z.exe not found, installing 7zip.commandline via Chocolatey"
-            choco install 7zip.commandline -y
-            $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          # Try extracting with 7z; install via Chocolatey if missing and refresh environment
+          $extracted = $false
+          if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
+            Write-Host "7z.exe found in PATH; extracting"
+            & 7z.exe x $archivePath -o$temp -y | Out-Host
+            if (Get-ChildItem $temp | Where-Object { $_.PSIsContainer }) { $extracted = $true }
+          } else {
+            Write-Host "7z.exe not found, attempting to install 7zip.commandline via Chocolatey"
+            choco install 7zip.commandline -y || Write-Host "choco install returned non-zero"
+            # Refresh environment so PATH changes are visible in this session
+            if (Get-Command refreshenv -ErrorAction SilentlyContinue) {
+              refreshenv | Out-Null
+            } else {
+              $env:PATH = $env:PATH + ';C:\ProgramData\chocolatey\bin'
+            }
+            if (Get-Command 7z.exe -ErrorAction SilentlyContinue) {
+              Write-Host "7z.exe now available; extracting"
+              & 7z.exe x $archivePath -o$temp -y | Out-Host
+              if (Get-ChildItem $temp | Where-Object { $_.PSIsContainer }) { $extracted = $true }
+            } else {
+              Write-Host "7z.exe still not available after Chocolatey install"
+            }
           }
 
-          if (-not $sevenZip) {
-            throw "7z.exe is required to extract 7z archives"
+          # Fallback to ZIP if 7z extraction failed
+          $zipPath = 'packaging\ffmpeg.zip'
+          if (-not $extracted) {
+            Write-Host "7z extraction failed; falling back to zip release package"
+            Remove-Item -Force -ErrorAction SilentlyContinue $archivePath
+            $urlZip = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+            if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+              & curl.exe -L $urlZip -o $zipPath --fail --silent --show-error
+            } else {
+              Invoke-WebRequest -Uri $urlZip -OutFile $zipPath -UseBasicParsing
+            }
+            if (-not (Test-Path $zipPath)) { throw "Fallback FFmpeg zip download failed" }
+            Write-Host "Extracting ZIP fallback"
+            Expand-Archive -Path $zipPath -DestinationPath $temp -Force
           }
-
-          & $sevenZip.Source x $archivePath -o$temp -y | Out-Null
 
           $inner = Get-ChildItem $temp | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           if (-not $inner) { throw "Failed to extract FFmpeg archive" }
@@ -90,7 +117,8 @@ jobs:
           }
 
           Write-Host "FFmpeg successfully bundled to packaging/ffmpeg"
-          Remove-Item $archivePath -Force
+          Remove-Item $archivePath -Force -ErrorAction SilentlyContinue
+          Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
           Remove-Item $temp -Recurse -Force
 
       - name: Clean previous builds
